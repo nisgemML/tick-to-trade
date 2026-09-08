@@ -262,11 +262,32 @@ public:
         const uint32_t slot = uint32_t(submitted_ & kMask);
         buf_[slot] = entry;
 
+        // The SQ ring is a separate resource from the buffer-slot check
+        // above: submitted_ - completed_ < kQueueDepth (this application's
+        // own bookkeeping) does not guarantee io_uring_get_sqe() succeeds,
+        // because with SQPOLL the kernel's own polling thread consumes SQEs
+        // asynchronously — there is a real window where this process's
+        // counters say "there's room" while the actual ring, a physically
+        // separate structure the kernel updates on its own schedule, has
+        // not caught up yet. The previous version of this function handled
+        // a failed io_uring_get_sqe() with a single non-blocking drain
+        // attempt and one retry, then gave up and returned false — weaker
+        // than the buffer-slot check just above it, which properly blocks
+        // and retries via wait_for_one_completion(). Confirmed as a real,
+        // reproducible gap on real multi-core CI hardware (this code never
+        // failed on this project's own single-core development sandbox):
+        // GitHub Actions' matching_engine_demo run reported exactly 1113
+        // log() call failures in SQPOLL mode, and the resulting file was
+        // short by exactly 1113 * sizeof(LogEntry) bytes — the failures
+        // were real lost writes, not a red herring. Fixed by using the
+        // same blocking-retry pattern as the buffer-slot check: keep
+        // waiting for a completion to free ring space until
+        // io_uring_get_sqe() succeeds or the ring itself is genuinely
+        // unrecoverable, instead of giving up after one weak attempt.
         struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-        if (!sqe) {
-            drain_completed_nonblocking();
+        while (!sqe) {
+            if (!wait_for_one_completion()) return false; // ring/error unrecoverable
             sqe = io_uring_get_sqe(&ring_);
-            if (!sqe) return false;
         }
 
         const off_t offset = static_cast<off_t>(file_offset_);
@@ -355,17 +376,6 @@ private:
         timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         return uint64_t(ts.tv_sec) * 1'000'000'000ULL + uint64_t(ts.tv_nsec);
-    }
-
-    // Drains whatever completions are ALREADY available, without blocking.
-    // Used to free SQ ring space; does not by itself guarantee any
-    // particular slot has completed (see log()'s blocking wait for that).
-    void drain_completed_nonblocking() noexcept {
-        struct io_uring_cqe* cqe;
-        while (io_uring_peek_cqe(&ring_, &cqe) == 0) {
-            record_completion(cqe);
-            io_uring_cqe_seen(&ring_, cqe);
-        }
     }
 
     // Blocks until at least one completion is reaped. Returns false only

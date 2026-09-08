@@ -230,11 +230,63 @@ testing.
 
 ---
 
-## 7. Failure modes summary
+## 7. A second real bug this repo's own CI caught: a weak retry on SQ-ring-full
+
+Section 6's -EINTR fix was necessary but not sufficient — CI caught a
+second, related gap in the same function, on the very next real run
+against actual multi-core hardware. `log()` checks two different
+resources before it can submit a write: whether this process's own
+buffer slot is free (`submitted_ - completed_ >= kQueueDepth`, checked
+first, and handled correctly — it blocks and retries via
+`wait_for_one_completion()` until the slot frees up), and separately,
+whether `io_uring_get_sqe()` can actually get a submission-queue entry.
+That second check used to be handled far more weakly: one non-blocking
+drain attempt, one retry, then give up and return `false`.
+
+Those two checks look similar but aren't checking the same thing. The
+buffer-slot count is this process's own bookkeeping; the SQ ring's
+actual head/tail pointers are a separate structure that, under SQPOLL,
+the *kernel's own polling thread* updates on its own schedule. There is
+a real window where this process's counters say "there's room" while
+the underlying ring, still being drained asynchronously by the kernel,
+genuinely doesn't have a free slot yet — and on a single-core sandbox
+(this project's own development environment) that window rarely opens
+wide enough to matter. On real, multi-core CI hardware, it does:
+
+```
+--- Mode 4: SQPOLL ---
+logger: 198887 submitted, 198887 completed, 0 errors, 1113 log() call failures
+ring+sqpoll  : 7955480 / 8000000 bytes  MISMATCH
+```
+
+1113 lost writes, and 8,000,000 − 7,955,480 = 44,520 bytes short —
+exactly `1113 × sizeof(LogEntry)` (40 bytes). Not a coincidence or a
+rounding artifact: every one of those 1113 `log()` calls that reported
+failure corresponds exactly to one missing entry on disk. The failures
+were real.
+
+**Fixed** by giving the SQ-ring-full case the same treatment as the
+buffer-slot check right above it in the same function: block and retry
+via `wait_for_one_completion()` until `io_uring_get_sqe()` succeeds or
+the ring is genuinely unrecoverable, instead of giving up after one weak
+attempt. The now-redundant `drain_completed_nonblocking()` helper (it
+only ever existed to serve the weak retry path) was removed rather than
+left as unused dead code.
+
+**Lesson:** when a function checks two different preconditions before
+proceeding, "these look like the same kind of check" is not a reason to
+give them different robustness — especially when only one of the two
+resources being checked is actually this process's own state, and the
+other is a kernel-managed structure this process doesn't have full
+visibility into moment-to-moment.
+
+---
+
+## 8. Failure modes summary
 
 | Failure | Where | Handling |
 |---|---|---|
-| SQ ring temporarily full | `log()` | drains already-completed CQEs to free ring space, retries once, gives up (returns `false`) if still full |
+| SQ ring temporarily full | `log()` | blocks and retries via `wait_for_one_completion()` until a slot frees up or the ring is genuinely unrecoverable — see §7; a single weak non-blocking retry used to give up too early on real multi-core hardware |
 | `io_uring_wait_cqe()`/`io_uring_submit()` interrupted by a signal (`-EINTR`) | `log()`, `flush()` | retried automatically — not treated as a ring failure; see §6 |
 | Buffer slot still in flight | `log()` | **blocks** the calling (logger) thread until the oldest outstanding write completes — see §1 |
 | Write fails (`ENOSPC`, `EIO`, short write) | completion (`cqe->res`) | counted in `error_count()`, exact `-errno` in `last_error()` — was previously silently indistinguishable from success |
