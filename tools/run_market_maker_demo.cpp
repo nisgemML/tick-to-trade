@@ -48,7 +48,34 @@ int main(int argc, char** argv) {
     // side of the spread.
     cfg.half_spread = engine::to_price(0.004);
     cfg.position_limit = position_limit;
-    // defaults for everything else: see market_maker.hpp
+    // inventory_skew: calibrated from real market data via
+    // scripts/calibrate_mm.py, not left at MarketMakerConfig's own
+    // illustrative default (0.0001). Methodology: gamma=0.1
+    // (Avellaneda-Stoikov's own stated illustrative risk-aversion
+    // constant, a choice, not derived from data) x sigma^2, where sigma
+    // is the REALIZED (not assumed) return volatility measured from
+    // 1,000 real 1-minute BTCUSDT bars (Binance public API, 2026-09-08),
+    // then applied to THIS demo's own $100 price level — deliberately
+    // not BTC's own ~$78k price level, since relative volatility
+    // transfers across price scales but dollar volatility does not (see
+    // calibrate_mm.py's own header comment for the naive version of this
+    // mistake, caught before it shipped: applying BTC's own price level
+    // would have derived a skew implying a multi-thousand-dollar
+    // reservation-price shift per 100 units of inventory, against a
+    // demo whose entire price range is about a cent).
+    //
+    // Verified directly, not assumed safe: run against this exact demo
+    // both ways (old default 0.0001 vs this calibrated value, same
+    // deterministic seed) before shipping — both produce stable,
+    // bounded positions and no crashes; the calibrated value trades more
+    // actively (2,098 vs 1,287 fills over 20,000 events) and different
+    // P&L, an honest behavioral difference, not evidence of breakage.
+    // Per docs/strategy-notes.md and market_maker.hpp: this measures
+    // sigma from real data, nothing else — half_spread, k, and the T-t
+    // horizon term remain unmodeled, and P&L against this demo's
+    // synthetic, uncalibrated order flow is not a claim of profitable
+    // alpha either way.
+    cfg.inventory_skew = 0.0002060449;
     hft::MarketMaker mm(kSymbol, cfg, /*account_id=*/999);
     // Note: options-engine's self-trade prevention (Order::account_id)
     // is not actually reachable through MarketDataMsg / submit() — the

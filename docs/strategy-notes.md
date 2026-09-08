@@ -83,18 +83,30 @@ market_maker.hpp for exactly what's simplified and why.
 
 ## What this stack does *not* claim
 
-- No calibrated \(\sigma, k, \gamma\) — `half_spread`/`inventory_skew` are
-  illustrative constants, tuned only so the demo's quotes fall inside its
-  own synthetic feed's price range (see run_market_maker_demo.cpp's
-  comment on this — a first run with an untuned default posted zero fills
-  for a mundane, disclosed reason: the spread was simply wider than the
-  synthetic feed's entire trading range).
+- **`half_spread` is still an illustrative constant** — tuned only so the
+  demo's quotes fall inside its own synthetic feed's price range (see
+  `run_market_maker_demo.cpp`'s comment: a first run with an untuned
+  default posted zero fills for a mundane reason, the spread was simply
+  wider than the synthetic feed's entire trading range).
+- **`inventory_skew` is now calibrated from real data, not illustrative
+  — but only sigma is.** `scripts/calibrate_mm.py` fetches real 1-minute
+  BTCUSDT bars (Binance public API), measures realized (not assumed)
+  return volatility, and derives `inventory_skew = gamma * sigma^2`,
+  applied to this demo's own price level rather than BTC's. `gamma`
+  (risk aversion) remains a stated choice — Avellaneda-Stoikov's own
+  illustrative constant, not something price data alone determines. `k`
+  (order-arrival intensity) and the model's `T-t` horizon term remain
+  entirely unmodeled. One real parameter, out of several, is now
+  measured instead of guessed — stated precisely, not oversold as "the
+  model is calibrated."
 - No live alpha signal, no adverse-selection model
 - Synthetic stream \(\neq\) historical microstructure — any P&L number
   `run_market_maker_demo.cpp` prints reflects whether the *mechanics* are
   implemented correctly against a synthetic, uncalibrated stream with no
   real informational structure, not whether the strategy would be
-  profitable against a real market. Do not read it as an alpha claim.
+  profitable against a real market. Do not read it as an alpha claim —
+  this remains true even with real sigma feeding one config constant;
+  the order flow being matched against is still synthetic.
 
 ## What to say in interview
 
@@ -104,6 +116,12 @@ market_maker.hpp for exactly what's simplified and why.
 > easy to get backwards), a working inventory skew, and an enforced
 > position limit — verified both in isolated unit tests and end-to-end
 > against the live matching engine, including a real data race I found
-> and fixed while wiring it up. It is not a trading strategy with alpha;
-> I won't pretend a synthetic fill log is a Sharpe number. Building a
-> real backtest against real data is a separate, larger piece of work.
+> and fixed while wiring it up. The inventory-skew coefficient is
+> calibrated from real market data — measured realized volatility from
+> Binance, not a guessed constant — and I caught a real unit-scaling bug
+> in that calibration script before it shipped (naively applying BTC's
+> own price level would have produced a nonsensical multi-thousand-
+> dollar skew). It is still not a trading strategy with alpha; I won't
+> pretend a synthetic fill log is a Sharpe number, and gamma, k, and the
+> model's time-horizon term remain unmodeled. Building a real backtest
+> against real data is a separate, larger piece of work.
