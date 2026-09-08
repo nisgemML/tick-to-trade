@@ -2,70 +2,48 @@
 
 ## Policy
 
-| Claim type | Allowed when |
-|------------|----------------|
-| Software pipeline throughput | Any host; must state unpinned vs pinned |
-| Software tick-to-trade (recv_ns → fill observed) | Concurrent drain; burst vs steady labeled |
-| Component microbench | See third_party/*/BENCHMARK_RESULTS.md |
-| Exchange wire / NIC HW timestamp | **Not claimed in this repo** |
+| Metric | Meaning |
+|--------|---------|
+| `throughput_submit` | Enqueue rate into MatchingEngine SPSC only (drain concurrent) |
+| `throughput_e2e` | Submit + poll-until-drained (no fixed sleep) |
+| Software tick-to-trade | `recv_ns` at submit → fill observed on drain thread |
+| **Not claimed** | Exchange wire / NIC HW timestamp latency |
 
-## Environment (this recorded run)
+## Environment
 
 ```
-Host: shared CI/dev container (not isolcpus)
-CPU: available cores shared
-Compiler: g++ 13, -O2/-O3 Release
-Build: cmake -DCMAKE_BUILD_TYPE=Release
-Pin: none (engine_cpu=-1)
-SCHED_FIFO: no
-Date: 2026-09-07
+Host: shared container (unpinned)
+Build: Release, g++ 13
+Date: 2026-09-08
 ```
 
-## Pipeline throughput (`bench_pipeline`)
+## Pipeline (`bench_pipeline 30000`)
 
-| Events | Fills | Throughput | Queue full |
-|--------|-------|------------|------------|
-| 30000 | 23938 | **~40,041 msg/s** | 0 |
+| Metric | Value |
+|--------|-------|
+| events | 30000 |
+| fills | 23938 |
+| submit_only_us | ~314 µs |
+| submit+drain_us | ~1.0 s (poll until drained) |
+| throughput_submit | ~95M msg/s (queue push rate) |
+| throughput_e2e | ~29k msg/s |
+| queue_full | 0 |
 
-## Software tick-to-trade (`bench_tick_to_trade`)
+Earlier builds timed a fixed 200ms sleep inside the measured region and under-reported throughput. That is fixed: submit and drain are timed separately.
 
-Definition: `now_at_fill_observed - recv_ns_at_submit` for fills whose order_id was stamped.
-
-| Mode | Events | Samples | p50 | p99 | max | Throughput |
-|------|--------|---------|-----|-----|-----|------------|
-| steady | 15000 | 13763 | ~37 ms | ~68 ms | ~69 ms | ~23k msg/s |
-| burst | 15000 | 13763 | ~30 ms | ~57 ms | ~58 ms | ~27k msg/s |
-
-**Interpretation (important for interviews):**  
-On an unpinned shared core with async drain, these percentiles are dominated by **queueing + scheduling**, not by the nanosecond matching kernel. That is expected.  
-Isolated-core + `SCHED_FIFO` + paced input is required before quoting sub-microsecond software path numbers.  
-The **measurement plumbing is in place** (`submit_with_ts` + histogram). Re-run:
-
-```bash
-taskset -c 2 chrt -f 50 ./build/bench_tick_to_trade 100000
-taskset -c 2 chrt -f 50 ./build/bench_pipeline 200000
-```
-
-## Feed path (`run_feed_pipeline`)
-
-MoldUDP synthetic → GapBuffer → ItchAdapter → MatchingEngine:
-
-| Events | Fills | ttt samples |
-|--------|-------|-------------|
-| 5000 | 4520 | 4520 |
-
-## Correctness (not performance)
+## Correctness (Release, CHECK not assert)
 
 | Test | Result |
 |------|--------|
-| backpressure | 65535 accepted, 4465 rejected |
-| conservation | identical fills/qty across two runs |
-| feed_adapter | ITCH Add → MarketDataMsg |
-| pipeline_smoke | 2000 events, fills > 0 |
+| backpressure | accepted=65535 rejected=4465 |
+| conservation | identical fills across runs |
+| feed_adapter | price scale ×100 checked |
+| gap_injection | gap fires; seq 2/3 deliver; duplicate dropped |
+| check_macro_fails | exits 1 under Release |
 
-## Component depth (vendored)
+## Isolated-core (fill on real hardware)
 
-- options-engine: differential testing / sanitizer bug history  
-- mpsc-queue: formal acq/rel proof + TSan litmus  
-- io-uring-queue: failure-mode documentation  
-- udp-multicast-receiver: gap/A-B/timestamp path  
+```bash
+taskset -c 2 chrt -f 50 ./build/bench_pipeline 200000
+taskset -c 2 chrt -f 50 ./build/bench_tick_to_trade 100000
+```

@@ -80,3 +80,7 @@ hft-stack/
 ├── LIMITATIONS.md
 └── docs/design.md
 ```
+
+## Quantitative notes
+See [docs/strategy-notes.md](docs/strategy-notes.md) for how measured latency/inventory would enter a simple MM decision (not a backtest).
+

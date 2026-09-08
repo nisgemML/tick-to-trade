@@ -38,3 +38,16 @@ See:
 - True `recv_ns` from SO_TIMESTAMPING once UDP feed is adapted
 - io_uring sink behind CMake flag without forcing liburing on all CI hosts
 - GapBuffer (~6MB) must be heap-allocated; stack local caused SIGSEGV in test_feed_adapter.
+
+### 5. assert() compiled out under Release (-DNDEBUG)
+**Symptom:** All tests used `assert()`. Default `CMAKE_BUILD_TYPE=Release` defines `NDEBUG`, so every CHECK was a no-op; ctest always "Passed" even with impossible conditions.  
+**Fix:** `hft/check.hpp` CHECK/TEST_EXIT macros that always evaluate; CI Release job plus a deliberate-fail binary that must exit non-zero.  
+**Lesson:** Composition-layer tests must not rely on assert() if the documented build is Release.
+
+### 6. bench_pipeline timed a fixed 200ms sleep
+**Symptom:** `run_stream` slept 40×5ms inside the timed region; reported throughput was dominated by sleep (~10× low).  
+**Fix:** `submit_stream` + `wait_until_drained` (poll); bench reports submit-only and e2e separately.
+
+### 7. feed path never exercised GapBuffer gaps
+**Symptom:** sequential seq only; gap/duplicate paths untested in integration.  
+**Fix:** `test_gap_injection` skips seq2, asserts on_gap, then fills gap and checks delivery order + duplicate drop.

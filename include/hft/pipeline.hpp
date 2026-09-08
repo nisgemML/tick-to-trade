@@ -29,7 +29,7 @@ struct PipelineResult {
     uint64_t engine_messages{0};
     uint64_t engine_matches{0};
     uint64_t fill_qty_total{0};
-    LatencyHistogram tick_to_trade; // recv_ns -> fill observe ns (software path)
+    LatencyHistogram tick_to_trade;
 };
 
 class Pipeline {
@@ -61,7 +61,6 @@ public:
         return submit_with_ts(msg, 0);
     }
 
-    // recv_ns from feed SO_TIMESTAMPING / GapBuffer MoldMessage.recv_ns
     bool submit_with_ts(const engine::MarketDataMsg& msg, uint64_t recv_ns) {
         ++result_.events_submitted;
         if (recv_ns != 0 && msg.msg_type == engine::MarketDataMsg::Type::NewOrder) {
@@ -75,13 +74,32 @@ public:
         return false;
     }
 
-    void run_stream(const std::vector<engine::MarketDataMsg>& stream) {
-        if (!start()) return;
+    // Submit only — no fixed sleep. Callers time this for throughput.
+    void submit_stream(const std::vector<engine::MarketDataMsg>& stream) {
         for (const auto& m : stream) {
             while (!submit(m)) std::this_thread::yield();
         }
-        for (int i = 0; i < 40; ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // Poll until engine message count catches accepted (or timeout).
+    // Replaces fixed 200ms sleep so benches don't time sleep.
+    void wait_until_drained(uint64_t expected_msgs, int timeout_ms = 5000) {
+        using clock = std::chrono::steady_clock;
+        const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (clock::now() < deadline) {
+            if (engine_.messages_processed() >= expected_msgs) {
+                // brief settle for outbound drain
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                return;
+            }
+            std::this_thread::yield();
+        }
+    }
+
+    void run_stream(const std::vector<engine::MarketDataMsg>& stream) {
+        if (!start()) return;
+        submit_stream(stream);
+        wait_until_drained(stream.size());
         stop();
     }
 

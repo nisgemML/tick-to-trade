@@ -1,38 +1,23 @@
 # Interview one-pager
 
-## Pitch (45–60s)
+## What this answers
 
-I built **hft-stack** as a composition layer over four components I also own:
+**Systems / low-latency infra:** composition, back-pressure, gap handling, measurement honesty, sanitizers.
 
-1. **options-engine** — SoA matching + verification culture  
-2. **mpsc-queue** — formal memory-ordering proof  
-3. **io-uring-queue** — async logger design + failure modes  
-4. **udp-multicast-receiver** — MoldUDP64/ITCH gap handling  
+**Quant developer (signal/pricing):** this repo is plumbing only — no alpha, pricing, or risk model. Pair with a separate quantitative project if the role weights research heavily.
 
-The integrated path is:
+## Pitch (45s)
 
-`MoldUDP/ITCH → GapBuffer → MarketDataMsg → MatchingEngine → ExecutionReport → log`
+Four owned components composed into one path:
 
-with explicit **back-pressure**, **conservation tests**, and **tick-to-trade measurement** (`recv_ns` → fill observed).
+MoldUDP/ITCH → GapBuffer → MarketDataMsg → MatchingEngine → log
 
-## What to open live
+Tests use NDEBUG-safe CHECK (Release CI proves failures still fail). Gap injection is tested. Bench no longer times a fixed sleep.
 
-1. `README.md` — architecture  
-2. `BUGS_FOUND.md` — GapBuffer 6MB stack segfault; stop/join drain order  
-3. `tests/test_conservation.cpp` — determinism  
-4. `tests/test_backpressure.cpp` — queue full is not silent  
-5. `bench/bench_tick_to_trade.cpp` — measurement definition  
+## Open live
 
-## Honest limits (say this yourself)
-
-- Default numbers are **software path on unpinned cores**, not co-lo wire time  
-- Logger in the default binary is file sink on the drain thread (io_uring component is vendored)  
-- Feed demo uses synthetic MoldUDP packets; PCAP/live sockets are in the UDP component  
-
-## Why this is a 9.5-class portfolio piece
-
-- Real components, not toys  
-- Failure modes tested  
-- Measurement methodology explicit  
-- Composition bugs written down  
-- Does not over-claim latency  
+1. `tests/test_gap_injection.cpp`
+2. `tests/test_backpressure.cpp`
+3. `bench/bench_pipeline.cpp` (submit vs e2e split)
+4. `BUGS_FOUND.md`
+5. `.github/workflows/ci.yml` (Release + ASan + TSan)

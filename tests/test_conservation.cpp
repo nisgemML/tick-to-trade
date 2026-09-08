@@ -1,10 +1,8 @@
+#include "hft/check.hpp"
 #include "hft/feed.hpp"
 #include "hft/pipeline.hpp"
-#include <cassert>
 #include <cstdio>
 
-// Determinism: two independent pure streams with same seed produce same
-// pipeline outcomes when run sequentially with full stop between runs.
 int main() {
     hft::SyntheticFeedConfig fc;
     fc.symbol = 1;
@@ -35,12 +33,13 @@ int main() {
                 (unsigned long long)rb.engine_messages,
                 (unsigned long long)rb.events_accepted);
 
-    assert(ra.events_submitted == 3000);
-    assert(rb.events_submitted == 3000);
-    assert(ra.events_accepted == rb.events_accepted);
-    assert(ra.fills == rb.fills);
-    assert(ra.fill_qty_total == rb.fill_qty_total);
-    assert(ra.fills > 0);
-    std::printf("test_conservation OK\n");
-    return 0;
+    CHECK(ra.events_submitted == 3000, "runA submitted");
+    CHECK(rb.events_submitted == 3000, "runB submitted");
+    CHECK(ra.events_accepted == rb.events_accepted, "accepted match");
+    CHECK(ra.fills == rb.fills, "fills match");
+    CHECK(ra.fill_qty_total == rb.fill_qty_total, "fill qty match");
+    CHECK(ra.engine_messages == rb.engine_messages, "engine messages match");
+    CHECK(ra.fills > 0, "non-zero fills");
+
+    TEST_EXIT();
 }

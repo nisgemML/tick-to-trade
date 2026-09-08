@@ -1,7 +1,7 @@
-#include <chrono>
 #include "hft/itch_adapter.hpp"
 #include "hft/pipeline.hpp"
 #include "feed/gap_buffer.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -20,7 +20,9 @@ int main(int argc, char** argv) {
 
     auto gb = std::make_unique<feed::GapBuffer>();
     hft::ItchAdapter adapter({1}, [&](const engine::MarketDataMsg& m, uint64_t recv_ns) {
-        while (!pipe.submit_with_ts(m, recv_ns)) {}
+        while (!pipe.submit_with_ts(m, recv_ns)) {
+            std::this_thread::yield();
+        }
     });
     adapter.attach(*gb);
 
@@ -31,9 +33,10 @@ int main(int argc, char** argv) {
         const uint64_t recv = uint64_t(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count());
-        gb->ingest(pkt.data(), pkt.size(), recv);
+        (void)gb->ingest(pkt.data(), pkt.size(), recv);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    pipe.wait_until_drained(n);
     pipe.stop();
 
     const auto& r = pipe.result();

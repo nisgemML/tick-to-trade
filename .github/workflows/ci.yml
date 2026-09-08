@@ -1,15 +1,96 @@
 name: ci
 on: [push, pull_request]
+
 jobs:
-  build-test:
+  integration-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: install
         run: sudo apt-get update && sudo apt-get install -y cmake g++
-      - name: configure
+      - name: configure Release
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: build
         run: cmake --build build -j 2
-      - name: test
+      - name: integration tests
         run: ctest --test-dir build --output-on-failure
+      - name: prove CHECK active under Release
+        run: |
+          cmake --build build -j 2 --target test_check_macro_fails
+          if ./build/test_check_macro_fails; then
+            echo "ERROR: deliberate failing CHECK passed under Release" >&2
+            exit 1
+          fi
+
+  integration-asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run: |
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-asan -j 2
+          ctest --test-dir build-asan --output-on-failure
+
+  integration-tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run: |
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build-tsan -j 2
+          ctest --test-dir build-tsan --output-on-failure
+
+  # Vendored component suites — catch broken snapshots before an interviewer does
+  vendor-options-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: build + test options-engine
+        working-directory: third_party/options-engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 2
+          ctest --test-dir build --output-on-failure
+
+  vendor-mpsc-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: build + test mpsc-queue
+        working-directory: third_party/mpsc-queue
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 2
+          ctest --test-dir build --output-on-failure
+
+  vendor-udp-multicast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: build + test udp-multicast-receiver
+        working-directory: third_party/udp-multicast-receiver
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 2
+          ctest --test-dir build --output-on-failure
+
+  vendor-io-uring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ liburing-dev
+      - name: build + test io-uring-queue
+        working-directory: third_party/io-uring-queue
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 2
+          ctest --test-dir build --output-on-failure
