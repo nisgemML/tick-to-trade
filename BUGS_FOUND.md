@@ -29,7 +29,7 @@ options-engine and io-uring-queue document component bugs.
 
 See:
 
-- `third_party/options-engine/README.md` — 12 bugs found via differential testing / sanitizers
+- `third_party/options-engine/README.md` — 15 bugs found via differential testing / sanitizers / real multi-core hardware
 - `third_party/io-uring-queue/README.md` — silent data-loss in flush / buffer reuse
 - `third_party/mpsc-queue/proof/` — memory-ordering claims under TSan
 

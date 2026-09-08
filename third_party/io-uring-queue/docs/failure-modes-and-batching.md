@@ -114,13 +114,42 @@ params.sq_thread_cpu = 7;    // pin the kernel SQ poll thread to CPU 7
 Core pinning isn't a nice-to-have for SQPOLL; on this evidence, it's the
 difference between SQPOLL being the whole point of using io_uring and
 SQPOLL being actively counterproductive. This repo could not validate
-the *good* case directly (there is no second core available in this
-sandbox to pin the poll thread to and confirm the improvement) — that is
-an honest gap, not a hidden one. What it validates instead, concretely,
-is the *failure mode*: **do not enable SQPOLL without a genuinely
-dedicated core for the poll thread to run on; on a CPU-constrained or
-oversubscribed host (a busy VM, an over-committed container), SQPOLL can
-make things markedly worse, not better.**
+the *good* case directly on its own single-core development sandbox —
+there was no second core available to pin the poll thread to and confirm
+the improvement — and said so plainly rather than leaving the gap
+unstated.
+
+**Update: the good case, validated on real 8-core hardware.** Once real
+multi-core hardware was available (WSL2, Intel Core Ultra 7 155H, 8
+cores — see `BENCHMARK_RESULTS.md`'s "Real multi-core run" for the full
+numbers), `examples/matching_engine_demo.cpp` was given a CLI argument to
+pin the SQ poll thread to a specific core, and the same 200,000-report
+comparison was run both unpinned and pinned:
+
+```
+SQPOLL unpinned:        logger-complete mean=132,142ns  p50=113,214ns  p99=294,553ns
+SQPOLL pinned (core 7): logger-complete mean=102,492ns  p50= 91,456ns  p99=237,098ns
+```
+
+Pinning genuinely helped — roughly 19-22% faster across mean/p50/p99,
+consistently, not a fluke in one metric. And pinned SQPOLL beat plain
+io_uring (Mode 3, completion mean ~330,000ns on the same machine) by
+roughly 3.2x — exactly the outcome the `sq_thread_cpu` guidance above
+predicts, now actually demonstrated rather than only argued for. The
+1-core sandbox's result above is not superseded by this — both are real,
+both came from actually running the code, and together they show the
+whole shape of the tradeoff: SQPOLL is a genuine win *conditional on* a
+dedicated core, and a genuine loss without one. Neither number alone was
+the complete picture.
+
+What this still doesn't validate: true `isolcpus`-level isolation (a
+core reserved from the OS scheduler entirely, not just this process's
+own affinity request) — WSL2 is a real Linux kernel with real
+parallelism, but it runs as a Hyper-V VM on a hybrid P-core/E-core CPU,
+so "pinned to core 7" is a request the hypervisor's own scheduler still
+mediates. The pinned/unpinned comparison above is a fair, controlled,
+same-machine comparison regardless — it just isn't the strongest
+possible version of "isolated core" that exists.
 
 ---
 

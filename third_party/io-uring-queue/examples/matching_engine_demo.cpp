@@ -43,6 +43,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -166,7 +167,15 @@ Hist run_ring_plus_logger(LoggerT& logger, LogFn log_fn, Hist* completion_hist) 
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // sqpoll_cpu: pin the kernel's SQ-polling thread to a dedicated core.
+    // This project's own development sandbox has 1 CPU, where there is no
+    // second core to pin the poll thread to — the "good case" for SQPOLL
+    // (a genuinely dedicated poll core) could never be validated there,
+    // only the documented failure mode (no dedicated core available).
+    // Pass a real core number on multi-core hardware to actually test it:
+    // e.g. `./matching_engine_demo 7` pins the SQ poll thread to core 7.
+    const int sqpoll_cpu = (argc > 1) ? std::atoi(argv[1]) : -1;
     std::printf("=== Matching Engine -> Logger: End-to-End Comparison ===\n");
     std::printf("%d execution reports per mode, single matching-engine thread.\n\n", kReports);
 
@@ -230,9 +239,14 @@ int main() {
     // completion-latency picture, or only submission cost? Measured in the
     // same harness rather than assumed. ──────────────────────────────────────
     std::printf("\n--- Mode 4: SPSC ring + dedicated thread + io_uring SQPOLL ---\n");
+    if (sqpoll_cpu >= 0)
+        std::printf("SQ poll thread will be pinned to core %d (pass no argument for unpinned)\n", sqpoll_cpu);
+    else
+        std::printf("SQ poll thread is unpinned — pass a core number (e.g. `%s 7`) to pin it\n", argv[0]);
     IOURingLoggerConfig sqpoll_cfg;
     sqpoll_cfg.sqpoll = true;
     sqpoll_cfg.sqpoll_idle_ms = 2000;
+    sqpoll_cfg.sqpoll_cpu = sqpoll_cpu;
     IOURingLogger sqpoll_logger;
     bool have_sqpoll = sqpoll_logger.open("/tmp/demo_sqpoll.bin", sqpoll_cfg);
     if (!have_sqpoll) {
