@@ -37,6 +37,7 @@ jobs:
         run: |
           ./build-asan/run_feed_pipeline 8000
           ./build-asan/bench_tick_to_trade 8000
+          ./build-asan/run_market_maker_demo 10000
 
   integration-tsan:
     runs-on: ubuntu-latest
@@ -61,9 +62,17 @@ jobs:
           # run directly, by hand, outside CI. Run them here too so this
           # class of bug can't hide behind "the registered tests don't
           # happen to exercise the racy path" again.
+          #
+          # run_market_maker_demo is the same story a second time: its
+          # first version read OrderBook::best_quote() directly from this
+          # thread while the engine's own matching thread was still
+          # running — a real, TSan-confirmed race with no ctest coverage
+          # at all, only found by running the tool itself under TSan.
           ./build-tsan/run_feed_pipeline 8000
           ./build-tsan/bench_tick_to_trade 8000
           ./build-tsan/bench_tick_to_trade 8000 burst
+          ./build-tsan/run_market_maker_demo 10000
+          ./build-tsan/run_market_maker_demo 15000 300
 
   # Vendored component suites — catch broken snapshots before an interviewer does
   vendor-options-engine:

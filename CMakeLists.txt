@@ -30,6 +30,8 @@ add_executable(run_pipeline tools/run_pipeline.cpp)
 target_link_libraries(run_pipeline PRIVATE hft_iface)
 add_executable(run_feed_pipeline tools/run_feed_pipeline.cpp)
 target_link_libraries(run_feed_pipeline PRIVATE hft_iface)
+add_executable(run_market_maker_demo tools/run_market_maker_demo.cpp)
+target_link_libraries(run_market_maker_demo PRIVATE hft_iface)
 add_executable(bench_pipeline bench/bench_pipeline.cpp)
 target_link_libraries(bench_pipeline PRIVATE hft_iface)
 add_executable(bench_tick_to_trade bench/bench_tick_to_trade.cpp)
@@ -51,6 +53,9 @@ add_executable(test_gap_injection tests/test_gap_injection.cpp)
 target_link_libraries(test_gap_injection PRIVATE hft_iface)
 add_test(NAME gap_injection COMMAND test_gap_injection)
 
+add_executable(test_market_maker tests/test_market_maker.cpp)
+target_link_libraries(test_market_maker PRIVATE hft_iface)
+add_test(NAME market_maker COMMAND test_market_maker)
 
 # Not in ctest — used by CI to prove CHECK is active under Release (-DNDEBUG).
 add_executable(test_check_macro_fails tests/test_check_macro_fails.cpp)

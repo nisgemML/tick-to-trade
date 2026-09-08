@@ -38,7 +38,12 @@ See:
 - True `recv_ns` from SO_TIMESTAMPING once UDP feed is adapted
 - io_uring sink behind CMake flag without forcing liburing on all CI hosts
 - GapBuffer (~6MB) must be heap-allocated; stack local caused SIGSEGV in test_feed_adapter.
-- No quantitative decision-making layer yet (no market maker / strategy consuming this pipeline's own fills) — see docs/strategy-notes.md for the reasoning this would be built from.
+- `MarketMaker` (added this session — see `include/hft/market_maker.hpp`,
+  `docs/strategy-notes.md`) demonstrates correct inventory/P&L mechanics
+  against a real, tested implementation — it is not a calibrated strategy.
+  No fitted \(\sigma, k, \gamma\), no adverse-selection model, no backtest
+  harness. Those remain open, deliberately, as a separate and larger piece
+  of work — see strategy-notes.md's "What this stack does not claim."
 
 ### 5. assert() compiled out under Release (-DNDEBUG)
 **Symptom:** All tests used `assert()`. Default `CMAKE_BUILD_TYPE=Release` defines `NDEBUG`, so every CHECK was a no-op; ctest always "Passed" even with impossible conditions.  
@@ -63,3 +68,9 @@ See:
 **Fix:** `std::mutex recv_mu_` guarding both the insert and the find/erase; entries erased on first use (trade-off: a partially-filled order's *later* fills no longer get a tick-to-trade sample, only its first — the more common definition of the metric anyway, and the honest cost of not leaking).  
 **Fix, CI:** `run_feed_pipeline` and `bench_tick_to_trade` added directly to the ASan/TSan CI jobs (not just ctest), so this class of bug can't hide behind "the registered tests don't happen to exercise the racy path" again.  
 **Lesson:** A side-table that isn't part of the SPSC-protected hot path is easy to forget needs its own protection — "the queues are lock-free and correct" doesn't extend automatically to bookkeeping built on top of them.
+
+### 10. `run_market_maker_demo` read `OrderBook::best_quote()` from the wrong thread
+**Symptom:** The demo's quote loop called `mkt_engine.book_for(symbol)->best_quote()` directly from its own thread while the engine's matching thread was still running — exactly the hazard `MatchingEngine::book_for()`'s own doc comment already warned about (added earlier, in options-engine itself, after `examples/recovery_demo.cpp` hit the same class of bug there). `docs/strategy-notes.md` even already said "book state: available via matching engine after stop (not concurrent-safe while running)" — this file was written before the doc that already contained the answer was checked. TSan caught it on the very first run of the tool under a sanitizer; no ctest entry touches this code path at all.  
+**Fix:** Derive the quote's reference price only from `last_trade`, updated exclusively through the engine's own thread-safe `ExecutionReport`/SPSC channel — never touch `OrderBook` memory from a second thread while the engine is live.  
+**Fix, CI:** `run_market_maker_demo` added to both the ASan and TSan "exercise non-ctest tools" steps.  
+**Lesson:** A documented constraint in a doc file doesn't enforce itself — new code has to actually be checked against it, not just assumed to comply because it was written after the doc existed.
