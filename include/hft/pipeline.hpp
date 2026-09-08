@@ -5,9 +5,11 @@
 #include "hft/latency.hpp"
 #include "hft/log_sink.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -38,18 +40,18 @@ public:
     ~Pipeline() { stop(); }
 
     bool start() {
-        if (running_) return true;
+        if (running_.load(std::memory_order_acquire)) return true;
         (void)engine_.register_symbol(cfg_.symbol);
         if (!sink_.open(cfg_.log_path.c_str())) return false;
         engine_.start(cfg_.engine_cpu);
-        running_ = true;
+        running_.store(true, std::memory_order_release);
         drain_ = std::thread([this] { drain_loop(); });
         return true;
     }
 
     void stop() {
-        if (!running_) return;
-        running_ = false;
+        if (!running_.load(std::memory_order_acquire)) return;
+        running_.store(false, std::memory_order_release);
         engine_.stop();
         if (drain_.joinable()) drain_.join();
         sink_.close();
@@ -64,6 +66,18 @@ public:
     bool submit_with_ts(const engine::MarketDataMsg& msg, uint64_t recv_ns) {
         ++result_.events_submitted;
         if (recv_ns != 0 && msg.msg_type == engine::MarketDataMsg::Type::NewOrder) {
+            // recv_by_order_ is written here (producer/main-thread context)
+            // and read/erased in on_fill() (drain thread) — a genuine,
+            // TSan-confirmed data race existed here: a plain
+            // std::unordered_map mutated and read from two threads with
+            // zero synchronization, worse than the running_ race fixed
+            // earlier because it's a full STL container (including
+            // internal rehashing), not a single scalar. Neither of these
+            // two call sites is on options-engine's own matching hot path
+            // — this is purely tick-to-trade measurement bookkeeping, one
+            // insert per submitted order and one lookup per fill — so a
+            // mutex is the right tool here, not a lock-free structure.
+            std::lock_guard<std::mutex> lock(recv_mu_);
             recv_by_order_[msg.order_id] = recv_ns;
         }
         if (engine_.submit(msg)) {
@@ -121,7 +135,7 @@ private:
 
     void drain_loop() {
         engine::ExecutionReport rpt{};
-        while (running_) {
+        while (running_.load(std::memory_order_acquire)) {
             if (!engine_.poll_report(rpt)) {
                 std::this_thread::yield();
                 continue;
@@ -135,11 +149,39 @@ private:
         ++result_.fills;
         result_.fill_qty_total += rpt.exec_qty;
         const uint64_t t = now_ns();
-        auto it = recv_by_order_.find(rpt.order_id);
-        if (it == recv_by_order_.end())
-            it = recv_by_order_.find(rpt.contra_order_id);
-        if (it != recv_by_order_.end() && t >= it->second)
-            result_.tick_to_trade.record(t - it->second);
+        {
+            // Same recv_by_order_ map as submit_with_ts() — same lock.
+            // Also erase the entry once it's been used: the previous
+            // version never erased anything, so this map grew unbounded
+            // for the entire lifetime of the Pipeline (every NewOrder
+            // that ever carried a recv_ns stayed in it forever, whether
+            // or not it had already been matched). Harmless for a
+            // short, bounded benchmark run; a genuine, unbounded memory
+            // leak for any long-running use — a soak test, or a real
+            // deployment — which is exactly the class of thing this
+            // portfolio's own components (options-engine, io-uring-queue)
+            // have each been through a real bug-finding pass to catch
+            // elsewhere. Fixed here at the same time as the race, since
+            // both live in the same two lines.
+            //
+            // Trade-off worth being explicit about: an order filled
+            // across several partial ExecutionReports now gets its
+            // tick-to-trade sample recorded once, on its FIRST fill, not
+            // on every subsequent partial fill of the same order_id (the
+            // entry is gone after that). This matches the more common
+            // definition of tick-to-trade — time to first reaction, not
+            // every increment of it — and is the honest cost of no
+            // longer leaking one entry per order for the life of the
+            // process.
+            std::lock_guard<std::mutex> lock(recv_mu_);
+            auto it = recv_by_order_.find(rpt.order_id);
+            if (it == recv_by_order_.end())
+                it = recv_by_order_.find(rpt.contra_order_id);
+            if (it != recv_by_order_.end()) {
+                if (t >= it->second) result_.tick_to_trade.record(t - it->second);
+                recv_by_order_.erase(it);
+            }
+        }
 
         LogEntry e{};
         e.timestamp_ns = t;
@@ -156,8 +198,9 @@ private:
     engine::MatchingEngine engine_;
     FileLogSink sink_;
     std::thread drain_;
-    bool running_{false};
+    std::atomic<bool> running_{false};
     PipelineResult result_{};
+    std::mutex recv_mu_;
     std::unordered_map<engine::OrderId, uint64_t> recv_by_order_;
 };
 

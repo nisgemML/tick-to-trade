@@ -51,6 +51,7 @@ add_executable(test_gap_injection tests/test_gap_injection.cpp)
 target_link_libraries(test_gap_injection PRIVATE hft_iface)
 add_test(NAME gap_injection COMMAND test_gap_injection)
 
+
 # Not in ctest — used by CI to prove CHECK is active under Release (-DNDEBUG).
 add_executable(test_check_macro_fails tests/test_check_macro_fails.cpp)
 target_link_libraries(test_check_macro_fails PRIVATE hft_iface)

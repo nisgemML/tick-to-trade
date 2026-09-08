@@ -38,6 +38,7 @@ See:
 - True `recv_ns` from SO_TIMESTAMPING once UDP feed is adapted
 - io_uring sink behind CMake flag without forcing liburing on all CI hosts
 - GapBuffer (~6MB) must be heap-allocated; stack local caused SIGSEGV in test_feed_adapter.
+- No quantitative decision-making layer yet (no market maker / strategy consuming this pipeline's own fills) — see docs/strategy-notes.md for the reasoning this would be built from.
 
 ### 5. assert() compiled out under Release (-DNDEBUG)
 **Symptom:** All tests used `assert()`. Default `CMAKE_BUILD_TYPE=Release` defines `NDEBUG`, so every CHECK was a no-op; ctest always "Passed" even with impossible conditions.  
@@ -51,3 +52,14 @@ See:
 ### 7. feed path never exercised GapBuffer gaps
 **Symptom:** sequential seq only; gap/duplicate paths untested in integration.  
 **Fix:** `test_gap_injection` skips seq2, asserts on_gap, then fills gap and checks delivery order + duplicate drop.
+
+### 8. Pipeline `running_` was a plain bool across threads
+**Symptom:** `start`/`stop` wrote `running_` from the control thread while `drain_loop` read it on the drain thread — data race under the C++ memory model; TSan-visible and undefined behavior.  
+**Fix:** `std::atomic<bool> running_` with acquire loads / release stores so stop's store synchronizes with the drain loop's load before join.  
+**Lesson:** Any flag that crosses threads is an atomic (or mutex), even if "it usually works" on x86.
+
+### 9. `recv_by_order_` — an unordered_map raced across threads, and leaked
+**Symptom:** `submit_with_ts()` (control thread) writes `recv_by_order_[order_id]`; `on_fill()` (drain thread) reads/looks it up — a full STL container mutated and read from two threads with zero synchronization, worse than bug #8 (this one includes internal rehashing, not a single scalar). Invisible to every registered ctest: `Pipeline::submit()` always calls `submit_with_ts(msg, 0)`, and the write is gated on `recv_ns != 0`, so no test ever touched the racy code path — only `run_feed_pipeline` and `bench_tick_to_trade` (neither wired into ctest) pass a real timestamp. Confirmed directly under TSan on both tools. Also never erased anything, so the map grew unbounded for the life of the process — harmless for a short benchmark, a genuine leak for any long-running use.  
+**Fix:** `std::mutex recv_mu_` guarding both the insert and the find/erase; entries erased on first use (trade-off: a partially-filled order's *later* fills no longer get a tick-to-trade sample, only its first — the more common definition of the metric anyway, and the honest cost of not leaking).  
+**Fix, CI:** `run_feed_pipeline` and `bench_tick_to_trade` added directly to the ASan/TSan CI jobs (not just ctest), so this class of bug can't hide behind "the registered tests don't happen to exercise the racy path" again.  
+**Lesson:** A side-table that isn't part of the SPSC-protected hot path is easy to forget needs its own protection — "the queues are lock-free and correct" doesn't extend automatically to bookkeeping built on top of them.

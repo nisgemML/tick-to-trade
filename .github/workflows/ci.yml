@@ -33,6 +33,10 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-asan -j 2
           ctest --test-dir build-asan --output-on-failure
+      - name: exercise non-ctest tools under ASan+UBSan
+        run: |
+          ./build-asan/run_feed_pipeline 8000
+          ./build-asan/bench_tick_to_trade 8000
 
   integration-tsan:
     runs-on: ubuntu-latest
@@ -45,6 +49,21 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
           cmake --build build-tsan -j 2
           ctest --test-dir build-tsan --output-on-failure
+      - name: exercise non-ctest tools under TSan
+        run: |
+          # run_feed_pipeline and bench_tick_to_trade are the only two
+          # call sites that pass a real (non-zero) recv_ns into
+          # submit_with_ts() — every ctest entry goes through plain
+          # submit(), which always passes recv_ns=0, so the
+          # recv_by_order_ map is never even touched by any registered
+          # test. That's exactly how a real, TSan-confirmed data race in
+          # this exact map survived undetected until these two tools were
+          # run directly, by hand, outside CI. Run them here too so this
+          # class of bug can't hide behind "the registered tests don't
+          # happen to exercise the racy path" again.
+          ./build-tsan/run_feed_pipeline 8000
+          ./build-tsan/bench_tick_to_trade 8000
+          ./build-tsan/bench_tick_to_trade 8000 burst
 
   # Vendored component suites — catch broken snapshots before an interviewer does
   vendor-options-engine:
