@@ -1,0 +1,7 @@
+build/
+build_tsan/
+*.o
+*.a
+bench_ring
+test_ring
+/tmp/
