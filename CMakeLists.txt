@@ -5,6 +5,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 find_package(Threads REQUIRED)
+
+# Real io_uring async logging (see include/hft/log_sink.hpp), not just
+# vendored-but-unused third_party/io-uring-queue. Off by default so the
+# stack keeps building with zero extra dependencies on any Linux box;
+# turn it on explicitly once liburing-dev is available.
+option(HFT_WITH_IOURING "Use io_uring (not blocking write()) for the execution-report log sink; requires liburing" OFF)
+if(HFT_WITH_IOURING)
+    find_library(URING_LIB uring)
+    find_path(URING_INCLUDE liburing.h)
+    if(NOT URING_LIB OR NOT URING_INCLUDE)
+        message(FATAL_ERROR
+            "HFT_WITH_IOURING=ON but liburing was not found. "
+            "Install it (e.g. 'apt install liburing-dev') or configure with -DHFT_WITH_IOURING=OFF.")
+    endif()
+endif()
 set(OE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/options-engine)
 set(UDP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/udp-multicast-receiver)
 add_library(engine_core STATIC
@@ -26,6 +41,11 @@ target_include_directories(hft_iface INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/io-uring-queue/include
 )
 target_link_libraries(hft_iface INTERFACE engine_core Threads::Threads)
+if(HFT_WITH_IOURING)
+    target_compile_definitions(hft_iface INTERFACE HFT_HAVE_IOURING=1)
+    target_include_directories(hft_iface INTERFACE ${URING_INCLUDE})
+    target_link_libraries(hft_iface INTERFACE ${URING_LIB})
+endif()
 add_executable(run_pipeline tools/run_pipeline.cpp)
 target_link_libraries(run_pipeline PRIVATE hft_iface)
 add_executable(run_feed_pipeline tools/run_feed_pipeline.cpp)

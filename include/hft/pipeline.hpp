@@ -196,7 +196,7 @@ private:
 
     PipelineConfig cfg_;
     engine::MatchingEngine engine_;
-    FileLogSink sink_;
+    LogSink sink_; // FileLogSink (default) or IOURingLogSink (-DHFT_WITH_IOURING=ON) -- see log_sink.hpp
     std::thread drain_;
     std::atomic<bool> running_{false};
     PipelineResult result_{};

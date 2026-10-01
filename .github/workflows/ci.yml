@@ -74,6 +74,52 @@ jobs:
           ./build-tsan/run_market_maker_demo 10000
           ./build-tsan/run_market_maker_demo 15000 300
 
+  integration-iouring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ liburing-dev
+      - name: configure + build (HFT_WITH_IOURING=ON)
+        run: |
+          cmake -S . -B build-iouring -DCMAKE_BUILD_TYPE=Release -DHFT_WITH_IOURING=ON
+          cmake --build build-iouring -j 2
+      - name: integration tests (io_uring sink)
+        run: ctest --test-dir build-iouring --output-on-failure
+      - name: io_uring and blocking sinks must produce identical output
+        run: |
+          # Same semantic check as the one that proved this wiring correct,
+          # not just that it compiles: run the same input through both
+          # sink implementations and diff every field except timestamp_ns.
+          # See BUGS_FOUND.md #12 and scripts/compare_fill_logs.py.
+          cmake -S . -B build-default -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-default -j 2
+          rm -f feed_fills.log
+          ./build-default/run_feed_pipeline 8000
+          cp feed_fills.log /tmp/fills_default.log
+          rm -f feed_fills.log
+          ./build-iouring/run_feed_pipeline 8000
+          cp feed_fills.log /tmp/fills_iouring.log
+          python3 scripts/compare_fill_logs.py /tmp/fills_default.log /tmp/fills_iouring.log
+
+  integration-iouring-tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ liburing-dev
+      - run: |
+          cmake -S . -B build-iouring-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHFT_WITH_IOURING=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build-iouring-tsan -j 2
+          ctest --test-dir build-iouring-tsan --output-on-failure
+      - name: exercise non-ctest tools under TSan (io_uring sink)
+        run: |
+          ./build-iouring-tsan/run_feed_pipeline 8000
+          ./build-iouring-tsan/bench_tick_to_trade 8000
+          ./build-iouring-tsan/bench_tick_to_trade 8000 burst
+          ./build-iouring-tsan/run_market_maker_demo 10000
+          ./build-iouring-tsan/run_market_maker_demo 15000 300
+
   # Vendored component suites — catch broken snapshots before an interviewer does
   vendor-options-engine:
     runs-on: ubuntu-latest

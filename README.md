@@ -11,7 +11,7 @@ just sitting next to each other in one folder.
 |-------|-----------|----------|
 | Matching / LOB | SoA engine, differential testing vs. an independent reference model | `third_party/options-engine` |
 | Concurrency | Formally-proved MPSC queue + engine's own SPSC queues | `third_party/mpsc-queue` |
-| Logging | io_uring async logger, measured (not marketing) numbers | `third_party/io-uring-queue` |
+| Logging | Blocking write() by default; real io_uring async logger via `-DHFT_WITH_IOURING=ON` (needs liburing) | `third_party/io-uring-queue` |
 | Market data | MoldUDP64/ITCH decode + gap detection | `third_party/udp-multicast-receiver` |
 | Strategy | Inventory-aware market maker: correct P&L, skew, position limits | `include/hft/market_maker.hpp` |
 | Integration | Feed boundary, pipeline, benches, failure tests | `include/hft`, `tests`, `bench`, `tools` |
@@ -25,7 +25,7 @@ flowchart LR
     end
     B -->|MarketDataMsg| C[MatchingEngine]
     C -->|ExecutionReport| D[Drain thread]
-    D --> E[FileLogSink<br/>blocking write / io_uring]
+    D --> E["LogSink<br/>FileLogSink (default) or IOURingLogSink (-DHFT_WITH_IOURING=ON)"]
     D --> F[MarketMaker]
     F -->|quote: new / cancel orders| C
 ```
