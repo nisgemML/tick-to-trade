@@ -116,24 +116,24 @@ what's there and how to reproduce it:
 
 | Benchmark | What it measures | Status |
 |---|---|---|
-| `bench_mpsc` | MPSC vs mutex throughput, ping-pong latency | Committed (container, pinned) |
-| `bench_batch` | Batch push vs single push, K=1..128 | Committed (container, pinned) |
-| `bench_t2t` | ITCH decode -> LOB -> A-S quote, single-threaded | Committed (container, pinned) |
-| `bench_stress` | Sustained (not peak) multi-producer contention, full latency histograms | Real numbers from a 1-vCPU sandbox (oversubscription behavior, not peak throughput); dedicated-core run still pending |
-| `bench_t2t_queue` | Same tick-to-trade pipeline, but split across a decode thread and a strategy thread connected by `MpscQueue` — the version that actually exercises the queue | Real numbers from a 1-vCPU sandbox; dedicated-core run still pending |
-| `bench_comparison` | `MpscQueue` vs `std::mutex`, a spinlock, and `boost::lockfree::queue`, same workload, with a written trade-off discussion | Real numbers from a 1-vCPU sandbox — `MpscQueue` ranks first at every producer count across two independent runs; dedicated-core run still pending |
+| `bench_mpsc` | MPSC vs mutex throughput, ping-pong latency | Committed (container + WSL2/laptop, both pinned) |
+| `bench_batch` | Batch push vs single push, K=1..128 | Committed (container + WSL2/laptop, both pinned) |
+| `bench_t2t` | ITCH decode -> LOB -> A-S quote, single-threaded | Committed (container + WSL2/laptop, both pinned) |
+| `bench_stress` | Sustained (not peak) multi-producer contention, full latency histograms | Committed (WSL2/laptop, 6 pinned cores); kernel-isolated-core run still pending |
+| `bench_t2t_queue` | Same tick-to-trade pipeline, but split across a decode thread and a strategy thread connected by `MpscQueue` — the version that actually exercises the queue | Committed (WSL2/laptop, 6 pinned cores); kernel-isolated-core run still pending |
+| `bench_comparison` | `MpscQueue` vs `std::mutex`, a spinlock, and `boost::lockfree::queue`, same workload, with a written trade-off discussion | Committed (WSL2/laptop, 6 pinned cores) — `MpscQueue` beats the best alternative by 3.7-4.3x, median of 5 runs; kernel-isolated-core run still pending |
 
 `scripts/run_pinned_bench.sh` runs all of the above with core isolation
 checks, `taskset`/`chrt -f` pinning, and governor/Turbo reporting, and
 tells you plainly if the environment it's running in doesn't qualify as a
 trustworthy result rather than silently printing numbers anyway. See
-`BENCHMARK_RESULTS.md` for exactly which numbers below are real
-measurements versus which are still pending a run on qualifying hardware —
-that document does not present anything as a result that wasn't actually
+`BENCHMARK_RESULTS.md` for the exact environment behind every number below
+— that document does not present anything as a result that wasn't actually
 produced by the command printed next to it.
 
 Numbers below are the committed container results (see
-`BENCHMARK_RESULTS.md` for the exact environment and full methodology):
+`BENCHMARK_RESULTS.md` for the exact environment and full methodology, plus
+the WSL2/laptop results run on real dedicated hardware):
 
 ```
 === Throughput: MPSC vs Mutex (msgs/sec) ===
@@ -151,10 +151,13 @@ producers   K=1 (single push)
 ```
 
 These are same-thread round-trip numbers, not cross-thread contention under
-sustained load — see `BENCHMARK_RESULTS.md`'s "Sustained multi-producer
-contention" section for the harness built to measure that, and its
-"Comparison" section for `MpscQueue` benchmarked head-to-head against a
-mutex, a spinlock, and `boost::lockfree::queue` on the same workload.
+sustained load. On real dedicated hardware (WSL2, 6 pinned cores — see
+`BENCHMARK_RESULTS.md`), `MpscQueue` beats `std::mutex` by 3-4x at every
+non-oversubscribed producer count, and by 3.7-4.3x over the best of three
+alternatives (mutex, spinlock, `boost::lockfree::queue`) in a head-to-head
+comparison — see `BENCHMARK_RESULTS.md`'s "Sustained multi-producer
+contention" and "Comparison" sections for the full numbers and how they
+were produced.
 
 ---
 
