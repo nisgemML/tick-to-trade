@@ -12,7 +12,7 @@ just sitting next to each other in one folder.
 | Matching / LOB | SoA engine, differential testing vs. an independent reference model | `third_party/options-engine` |
 | Concurrency | Formally-proved MPSC queue + engine's own SPSC queues | `third_party/mpsc-queue` |
 | Logging | Blocking write() by default; real io_uring async logger via `-DHFT_WITH_IOURING=ON` (needs liburing) | `third_party/io-uring-queue` |
-| Market data | MoldUDP64/ITCH decode + gap detection | `third_party/udp-multicast-receiver` |
+| Market data | MoldUDP64/ITCH decode + gap detection; real UDP multicast receive (`SO_TIMESTAMPING`) verified end-to-end on a local group, not just synthetic replay — see `tools/run_live_pipeline.cpp` and BUGS_FOUND.md #13 | `third_party/udp-multicast-receiver` |
 | Strategy | Inventory-aware market maker: correct P&L, skew, position limits | `include/hft/market_maker.hpp` |
 | Integration | Feed boundary, pipeline, benches, failure tests | `include/hft`, `tests`, `bench`, `tools` |
 
@@ -47,6 +47,10 @@ ctest --test-dir build --output-on-failure
 ./build/bench_pipeline 100000
 ./build/run_feed_pipeline 10000        # MoldUDP synthetic -> GapBuffer -> match
 ./build/run_market_maker_demo 20000    # feed -> match -> inventory-aware quoting
+
+# Real UDP multicast, not a function call -- two terminals:
+./build/run_live_pipeline 239.1.1.1 15001 lo 10   # listens, prints stats on exit
+./build/send_live_itch   239.1.1.1 15001 lo 2000  # sends real MoldUDP64/ITCH packets
 ```
 
 CI builds and tests this repo three ways (`Release`, ASan+UBSan, TSan) and
@@ -77,15 +81,18 @@ on top of solid infrastructure, not just more plumbing.
 | `feed_adapter` | ITCH Add -> MarketDataMsg via GapBuffer, including the decoded price |
 | `gap_injection` | A real sequence gap is detected, held, and correctly reordered on fill |
 | `market_maker` | Exact round-trip P&L, correct fill-side attribution (aggressor *and* passive), skew direction, position-limit enforcement |
+| `live_multicast` | Real UDP multicast socket (not a function call) delivers every packet correctly through GapBuffer -> ItchAdapter -> Pipeline -> fills |
 | `check_macro_fails` (CI-only, not ctest) | Proves the test framework itself can't silently no-op under `-DNDEBUG` |
 
-## Eleven real bugs found composing this stack
+## Thirteen real bugs found composing this stack
 
 Not a hypothetical concern — found by actually building, running, and
 sanitizing this integration, most of them invisible until the pieces were
-wired together for real, and one only visible on GitHub's own multi-core
-CI hardware (never on this project's own single-core dev sandbox). Full
-detail, root cause, and fix for each is in
+wired together for real, one only visible on GitHub's own multi-core
+CI hardware (never on this project's own single-core dev sandbox), and
+one a repeat of an already-documented mistake in new code that hadn't
+been cross-checked against its own project's history. Full detail, root
+cause, and fix for each is in
 [`BUGS_FOUND.md`](BUGS_FOUND.md):
 
 1. Queue-full silently discarded unless explicitly counted
