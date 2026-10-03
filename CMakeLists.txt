@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 project(hft_stack VERSION 1.0.0 LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -18,6 +18,22 @@ if(HFT_WITH_IOURING)
         message(FATAL_ERROR
             "HFT_WITH_IOURING=ON but liburing was not found. "
             "Install it (e.g. 'apt install liburing-dev') or configure with -DHFT_WITH_IOURING=OFF.")
+    endif()
+endif()
+
+# Real NUMA-aware, explicitly hugepage-backed allocation for the feed
+# path's GapBuffer (see include/hft/numa_support.hpp), not just the
+# default heap allocation it's always used. Off by default, same reason
+# as HFT_WITH_IOURING above: zero extra dependencies on any Linux box
+# unless explicitly asked for.
+option(HFT_WITH_NUMA "NUMA-aware, hugepage-backed GapBuffer allocation in run_live_pipeline; requires libnuma" OFF)
+if(HFT_WITH_NUMA)
+    find_library(NUMA_LIB numa)
+    find_path(NUMA_INCLUDE numa.h)
+    if(NOT NUMA_LIB OR NOT NUMA_INCLUDE)
+        message(FATAL_ERROR
+            "HFT_WITH_NUMA=ON but libnuma was not found. "
+            "Install it (e.g. 'apt install libnuma-dev') or configure with -DHFT_WITH_NUMA=OFF.")
     endif()
 endif()
 set(OE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/options-engine)
@@ -39,12 +55,18 @@ target_include_directories(hft_iface INTERFACE
     ${UDP_ROOT}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpsc-queue/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/io-uring-queue/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp26-alloc/include
 )
 target_link_libraries(hft_iface INTERFACE engine_core Threads::Threads)
 if(HFT_WITH_IOURING)
     target_compile_definitions(hft_iface INTERFACE HFT_HAVE_IOURING=1)
     target_include_directories(hft_iface INTERFACE ${URING_INCLUDE})
     target_link_libraries(hft_iface INTERFACE ${URING_LIB})
+endif()
+if(HFT_WITH_NUMA)
+    target_compile_definitions(hft_iface INTERFACE HFT_HAVE_NUMA=1)
+    target_include_directories(hft_iface INTERFACE ${NUMA_INCLUDE})
+    target_link_libraries(hft_iface INTERFACE ${NUMA_LIB})
 endif()
 add_executable(run_pipeline tools/run_pipeline.cpp)
 target_link_libraries(run_pipeline PRIVATE hft_iface)
@@ -60,6 +82,8 @@ add_executable(bench_pipeline bench/bench_pipeline.cpp)
 target_link_libraries(bench_pipeline PRIVATE hft_iface)
 add_executable(bench_tick_to_trade bench/bench_tick_to_trade.cpp)
 target_link_libraries(bench_tick_to_trade PRIVATE hft_iface)
+add_executable(bench_gapbuffer_numa bench/bench_gapbuffer_numa.cpp)
+target_link_libraries(bench_gapbuffer_numa PRIVATE hft_iface)
 enable_testing()
 add_executable(test_pipeline_smoke tests/test_pipeline_smoke.cpp)
 target_link_libraries(test_pipeline_smoke PRIVATE hft_iface)
