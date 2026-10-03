@@ -20,6 +20,7 @@
 
 #include "hft/pipeline.hpp"
 #include "hft/itch_adapter.hpp"
+#include "hft/numa_support.hpp"
 #include "feed/receiver.hpp"
 #include "feed/gap_buffer.hpp"
 
@@ -59,7 +60,19 @@ int main(int argc, char** argv) {
     // first draft of this tool had it on the stack and segfaulted
     // immediately, zero output, before the first printf -- see the
     // commit history for this file).
-    auto gap_buf = std::make_unique<feed::GapBuffer>();
+    // NUMA-aware, explicitly hugepage-backed when built with
+    // -DHFT_WITH_NUMA=ON (falls back to plain heap allocation otherwise --
+    // see include/hft/numa_support.hpp for both paths).
+    auto gap_buf = hft::make_gap_buffer(/*node=*/0);
+    if (!gap_buf) {
+        std::fprintf(stderr, "GapBuffer allocation failed\n");
+        pipeline.stop();
+        return 1;
+    }
+#ifdef HFT_HAVE_NUMA
+    std::printf("GapBuffer: NUMA node %d requested, hugepage_backed=%d\n",
+                gap_buf.get_deleter().node(), gap_buf.get_deleter().hugepage_backed());
+#endif
 
     hft::ItchAdapterConfig icfg;
     hft::ItchAdapter adapter(icfg, [&](const engine::MarketDataMsg& m, uint64_t recv_ns) {

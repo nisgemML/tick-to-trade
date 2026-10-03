@@ -6,6 +6,7 @@
 | Match | Full options-engine core | Multi-venue SOR |
 | Log | Blocking `write()` by default; real `ioq::IOURingLogger` via `-DHFT_WITH_IOURING=ON` (see BUGS_FOUND.md #12) | Default build using io_uring with no opt-in step |
 | Latency | Software pipeline throughput | NIC HW timestamp to exchange ACK |
+| GapBuffer allocation | NUMA-node-bound, explicitly hugepage-backed via `-DHFT_WITH_NUMA=ON` (see BUGS_FOUND.md #14); independently verified against the kernel, not just the allocator's own return code | A measured cross-NUMA-node latency penalty — this sandbox has 1 node, same honest constraint as [cpp26-alloc](https://github.com/nisgemML/cpp26-alloc)'s own NUMA work |
 
 - Matching stays single-threaded (options-engine contract)
 - Logging never runs inside the match loop, in either sink configuration
@@ -21,3 +22,9 @@
   Zero packet loss observed up to a 5,000-packet zero-delay burst in this environment;
   that is a statement about this specific test, not a latency or loss guarantee under
   real network conditions
+- The NUMA-aware GapBuffer allocator is opt-in (`HFT_WITH_NUMA`), same reasoning as
+  `HFT_WITH_IOURING`; CI builds and runs the real live two-process multicast path under
+  it (`integration-numa`, `integration-numa-tsan`), not just a unit test in isolation
+- `bench/bench_gapbuffer_numa.cpp` measures whether hugepage backing actually changes
+  anything under realistic gap-recovery load (see BENCHMARK_RESULTS.md) — this sandbox's
+  honest result is reported there, not assumed from the standalone cpp26-alloc number

@@ -14,6 +14,7 @@ just sitting next to each other in one folder.
 | Logging | Blocking write() by default; real io_uring async logger via `-DHFT_WITH_IOURING=ON` (needs liburing) | `third_party/io-uring-queue` |
 | Market data | MoldUDP64/ITCH decode + gap detection; real UDP multicast receive (`SO_TIMESTAMPING`) verified end-to-end on a local group, not just synthetic replay — see `tools/run_live_pipeline.cpp` and BUGS_FOUND.md #13 | `third_party/udp-multicast-receiver` |
 | Strategy | Inventory-aware market maker: correct P&L, skew, position limits | `include/hft/market_maker.hpp` |
+| Allocation | GapBuffer's real ~6MB backing store NUMA-node-bound and explicitly hugepage-backed via `-DHFT_WITH_NUMA=ON` (needs libnuma); independently verified against the kernel, not trusted from return codes — see BUGS_FOUND.md #14 | `include/hft/numa_support.hpp`, `third_party/cpp26-alloc` |
 | Integration | Feed boundary, pipeline, benches, failure tests | `include/hft`, `tests`, `bench`, `tools` |
 
 ## Architecture

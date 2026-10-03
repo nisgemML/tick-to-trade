@@ -74,6 +74,33 @@ jobs:
           ./build-tsan/run_market_maker_demo 10000
           ./build-tsan/run_market_maker_demo 15000 300
 
+  integration-numa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libnuma-dev
+      - name: reserve hugepages + mount hugetlbfs
+        run: |
+          echo 64 | sudo tee /proc/sys/vm/nr_hugepages
+          sudo mkdir -p /mnt/huge
+          sudo mount -t hugetlbfs nodev /mnt/huge
+      - name: configure + build (HFT_WITH_NUMA=ON)
+        run: |
+          cmake -S . -B build-numa -DCMAKE_BUILD_TYPE=Release -DHFT_WITH_NUMA=ON
+          cmake --build build-numa -j 2
+      - name: integration tests
+        run: ctest --test-dir build-numa --output-on-failure
+      - name: live pipeline with a real NUMA/hugepage-backed GapBuffer
+        run: |
+          sudo rm -rf /var/run/dpdk
+          rm -f live_fills.log
+          ./build-numa/run_live_pipeline 239.1.1.1 15001 lo 6 &
+          sleep 1
+          ./build-numa/send_live_itch 239.1.1.1 15001 lo 2000 200
+          wait
+      - name: gap-recovery stress benchmark (NUMA build)
+        run: ./build-numa/bench_gapbuffer_numa 50
+
   integration-iouring:
     runs-on: ubuntu-latest
     steps:
@@ -100,6 +127,31 @@ jobs:
           ./build-iouring/run_feed_pipeline 8000
           cp feed_fills.log /tmp/fills_iouring.log
           python3 scripts/compare_fill_logs.py /tmp/fills_default.log /tmp/fills_iouring.log
+
+  integration-numa-tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libnuma-dev
+      - name: reserve hugepages + mount hugetlbfs
+        run: |
+          echo 64 | sudo tee /proc/sys/vm/nr_hugepages
+          sudo mkdir -p /mnt/huge
+          sudo mount -t hugetlbfs nodev /mnt/huge
+      - run: |
+          cmake -S . -B build-numa-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHFT_WITH_NUMA=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build-numa-tsan -j 2
+          ctest --test-dir build-numa-tsan --output-on-failure
+      - name: live pipeline under TSan (NUMA/hugepage-backed GapBuffer)
+        run: |
+          sudo rm -rf /var/run/dpdk
+          rm -f live_fills.log
+          ./build-numa-tsan/run_live_pipeline 239.1.1.1 15001 lo 6 &
+          sleep 1
+          ./build-numa-tsan/send_live_itch 239.1.1.1 15001 lo 2000 200
+          wait
 
   integration-iouring-tsan:
     runs-on: ubuntu-latest
