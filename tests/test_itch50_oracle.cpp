@@ -39,9 +39,10 @@ std::vector<uint8_t> unhex(const std::string& s) {
 }
 } // namespace
 
-int main() {
-    std::ifstream in(ITCH50_ORACLE_FILE);
-    if (!in) { std::fprintf(stderr, "cannot open %s\n", ITCH50_ORACLE_FILE); return 2; }
+int main(int argc, char** argv) {
+    const char* path = (argc > 1) ? argv[1] : ITCH50_ORACLE_FILE;   // override exists so the empty-input refusal is testable
+    std::ifstream in(path);
+    if (!in) { std::fprintf(stderr, "cannot open %s\n", path); return 2; }
     std::string line; std::size_t lineno = 0, n_msgs = 0;
     std::vector<uint8_t> first_add_body; std::map<char, std::size_t> per_type;
 
@@ -85,6 +86,8 @@ int main() {
         default: ++g_checks; ++g_failures; std::fprintf(stderr, "unknown type line %zu\n", lineno);
         }
     }
+
+    if (n_msgs == 0) { std::fprintf(stderr, "no test vectors in %s: refusing to report PASS on nothing\n", path); return 2; }
 
     // Truncated input must be rejected, never read past the buffer.
     {

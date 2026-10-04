@@ -112,7 +112,7 @@ What that does **not** show: Nasdaq BX is a small venue (15-60 resting orders pe
 | `itch50_replay_e2e` | Real NASDAQ file framing through the real pipeline and engine, 3 symbols x (from start / mid-day snapshot / reference only): engine book == independently derived book, 0 fills, capacity-overflow detection |
 | `check_macro_fails` (CI-only, not ctest) | Proves the test framework itself can't silently no-op under `-DNDEBUG` |
 
-## Seventeen real bugs found composing this stack
+## Eighteen real bugs found composing this stack
 
 Not a hypothetical concern — found by actually building, running, and
 sanitizing this integration, most of them invisible until the pieces were

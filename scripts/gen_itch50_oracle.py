@@ -28,28 +28,34 @@ BOOK_TYPES = b'AFECXDU'
 ALL_PARSE = b'RAFECXDU'
 
 # ---------------------------------------------------------------- oracle test vectors
+def oracle_line(t, body):
+    """One test-vector line for message bytes `body`: '<type> <hex> k=v ...', with every value read back
+    out of the third-party parser (never from this repo's code or from the generator's intent)."""
+    framed = frame(body)
+    msgs = list(MessageParser(message_type=t).parse_stream(framed))
+    assert len(msgs) == 1, (t, len(msgs))
+    o = msgs[0]
+    kv = {'locate': o.stock_locate, 'tracking': o.tracking_number, 'timestamp': o.timestamp}
+    tt = t.decode()
+    if tt == 'R':   kv['stock'] = o.stock.hex()
+    elif tt in 'AF':
+        kv.update(order_ref=o.order_reference_number, side=o.buy_sell_indicator.decode(),
+                  shares=o.shares, stock=o.stock.hex(), price=o.price)
+        if tt == 'F': kv['attribution'] = o.attribution.hex()   # read from the ORACLE's parser, like every other field
+    elif tt == 'E': kv.update(order_ref=o.order_reference_number, shares=o.executed_shares, match=o.match_number)
+    elif tt == 'C': kv.update(order_ref=o.order_reference_number, shares=o.executed_shares, match=o.match_number,
+                              printable=o.printable.decode(), price=o.execution_price)
+    elif tt == 'X': kv.update(order_ref=o.order_reference_number, shares=o.cancelled_shares)
+    elif tt == 'D': kv.update(order_ref=o.order_reference_number)
+    elif tt == 'U': kv.update(order_ref=o.order_reference_number, new_ref=o.new_order_reference_number,
+                              shares=o.shares, price=o.price)
+    return f"{tt} {body.hex()} " + " ".join(f"{k}={v}" for k, v in kv.items())
+
 def gen_oracle_cases(rnd):
     lines = []
     def rint(bits): return rnd.getrandbits(bits)
     def emit(t, body, cls):
-        framed = frame(body)
-        msgs = list(MessageParser(message_type=t).parse_stream(framed))
-        assert len(msgs) == 1, (t, len(msgs))
-        o = msgs[0]
-        kv = {'locate': o.stock_locate, 'tracking': o.tracking_number, 'timestamp': o.timestamp}
-        tt = t.decode()
-        if tt == 'R':   kv['stock'] = o.stock.hex()
-        elif tt in 'AF':
-            kv.update(order_ref=o.order_reference_number, side=o.buy_sell_indicator.decode(),
-                      shares=o.shares, stock=o.stock.hex(), price=o.price)
-        elif tt == 'E': kv.update(order_ref=o.order_reference_number, shares=o.executed_shares, match=o.match_number)
-        elif tt == 'C': kv.update(order_ref=o.order_reference_number, shares=o.executed_shares, match=o.match_number,
-                                  printable=o.printable.decode(), price=o.execution_price)
-        elif tt == 'X': kv.update(order_ref=o.order_reference_number, shares=o.cancelled_shares)
-        elif tt == 'D': kv.update(order_ref=o.order_reference_number)
-        elif tt == 'U': kv.update(order_ref=o.order_reference_number, new_ref=o.new_order_reference_number,
-                                  shares=o.shares, price=o.price)
-        lines.append(f"{tt} {body.hex()} " + " ".join(f"{k}={v}" for k, v in kv.items()))
+        lines.append(oracle_line(t, body))
     syms = [b'AAPL    ', b'SPY     ', b'A       ', b'ZVZZT   ', b'BRK.A   ']
     for i in range(150):
         loc, trk, ts = rint(16), rint(16), rint(48)

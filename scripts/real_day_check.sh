@@ -15,6 +15,7 @@ dec() { case "$FILE" in *.gz) gzip -dc "$FILE" ;; *) cat "$FILE" ;; esac; }
 run() { { dec | "$BIN" - "$@" --json --log "${TMPDIR:-/tmp}/real_day_fills.log"; } 2>/dev/null | grep '^{' | tail -1; }
 
 total=$(run --symbol "$1" --no-engine | python3 -c 'import json,sys; print(json.load(sys.stdin)["messages_read"])')
+case "$total" in ''|0|*[!0-9]*) echo "could not read any messages from $FILE (symbol '$1' not found, unreadable file, or tool failed)" >&2; exit 2;; esac
 echo "$FILE: $total messages"
 fail=0
 for sym in "$@"; do
