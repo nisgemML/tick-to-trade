@@ -13,6 +13,7 @@ just sitting next to each other in one folder.
 | Concurrency | Formally-proved MPSC queue + engine's own SPSC queues | `third_party/mpsc-queue` |
 | Logging | Blocking write() by default; real io_uring async logger via `-DHFT_WITH_IOURING=ON` (needs liburing) | `third_party/io-uring-queue` |
 | Market data | MoldUDP64/ITCH decode + gap detection; real UDP multicast receive (`SO_TIMESTAMPING`) verified end-to-end on a local group, not just synthetic replay — see `tools/run_live_pipeline.cpp` and BUGS_FOUND.md #13 | `third_party/udp-multicast-receiver` |
+| Real-data replay | NASDAQ TotalView-ITCH 5.0 files (`replay_itch50`): spec-accurate parser, independent reference book, checked against a third-party ITCH implementation — see BUGS_FOUND.md #15-17 | `include/hft/itch50.hpp`, `tools/replay_itch50.cpp` |
 | Strategy | Inventory-aware market maker: correct P&L, skew, position limits | `include/hft/market_maker.hpp` |
 | Allocation | GapBuffer's real ~6MB backing store NUMA-node-bound and explicitly hugepage-backed via `-DHFT_WITH_NUMA=ON` (needs libnuma); independently verified against the kernel, not trusted from return codes — see BUGS_FOUND.md #14 | `include/hft/numa_support.hpp`, `third_party/cpp26-alloc` |
 | Integration | Feed boundary, pipeline, benches, failure tests | `include/hft`, `tests`, `bench`, `tools` |
@@ -72,6 +73,22 @@ on top of solid infrastructure, not just more plumbing.
 5. Honest benchmark policy (software path != wire time — stated plainly, not glossed over)
 6. A real strategy component — correct P&L, correct fill attribution, enforced risk limits — not just infrastructure
 
+## Replaying a real NASDAQ ITCH 5.0 day
+
+NASDAQ publishes free full-day samples of **real** order-level data at `ftp://emi.nasdaq.com/ITCH/` (several GB each, framed as `[2-byte big-endian length][message]`). `replay_itch50` streams one symbol of such a file through the pipeline and matching engine and checks the engine's resulting book against an independent reference book built from the same messages:
+
+```bash
+# reference book only -- a fast pass over the whole file
+gzip -dc 01302020.NASDAQ_ITCH50.gz | ./build/replay_itch50 - --symbol AAPL --no-engine --json
+
+# engine from a book snapshot at 09:30:30 ET (after the opening cross)
+gzip -dc 01302020.NASDAQ_ITCH50.gz | ./build/replay_itch50 - --symbol AAPL --engine-start-ns 34230000000000 --json
+```
+
+Exit codes: `0` engine book matches the reference, `1` it disagrees, `2` usage/IO, `3` symbol not found, `4` the symbol's book exceeded the engine's fixed 65,536-order capacity (use `--no-engine`, or a less active symbol). The pre-open book on a real day is legitimately crossed until the opening cross runs, which is why `--engine-start-ns` exists.
+
+**Honest status:** this has been verified against spec-accurate synthetic data and a third-party ITCH implementation, including at 1.5M-message scale — but **not yet run on a real NASDAQ file** (the files are multi-GB and were not reachable from the environment this was built in). The first real run is the real test; BUGS_FOUND.md #15-17 are what the preparation for it turned up.
+
 ## Tests
 
 | Test | What it proves |
@@ -83,9 +100,11 @@ on top of solid infrastructure, not just more plumbing.
 | `gap_injection` | A real sequence gap is detected, held, and correctly reordered on fill |
 | `market_maker` | Exact round-trip P&L, correct fill-side attribution (aggressor *and* passive), skew direction, position-limit enforcement |
 | `live_multicast` | Real UDP multicast socket (not a function call) delivers every packet correctly through GapBuffer -> ItchAdapter -> Pipeline -> fills |
+| `itch50_oracle` | `itch50.hpp` vs an independent third-party ITCH 5.0 implementation: 1,214 messages, 10,327 field checks incl. boundary values; pins that the vendored legacy parser does *not* match the spec |
+| `itch50_replay_e2e` | Real NASDAQ file framing through the real pipeline and engine, 3 symbols x (from start / mid-day snapshot / reference only): engine book == independently derived book, 0 fills, capacity-overflow detection |
 | `check_macro_fails` (CI-only, not ctest) | Proves the test framework itself can't silently no-op under `-DNDEBUG` |
 
-## Thirteen real bugs found composing this stack
+## Seventeen real bugs found composing this stack
 
 Not a hypothetical concern — found by actually building, running, and
 sanitizing this integration, most of them invisible until the pieces were
