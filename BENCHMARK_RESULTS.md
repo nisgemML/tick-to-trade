@@ -123,7 +123,22 @@ measured separately, not assumed from this number.
 | SPY | 16,000,000 | 344,816 | 57 | 321.63 x 103 / 321.65 x 16 | 0 | engine == reference |
 | SPY | 24,000,000 | 506,358 | 56 | 321.16 x 131 / 321.18 x 20 | 0 | engine == reference |
 
-**What this does not show.** (a) Nasdaq BX is a small venue -- 15-60 resting orders per symbol, so the engine's 65,536-order capacity (BUGS_FOUND.md #17) was never approached; that needs a main-venue day. (b) This run compared the touch only. The tool now compares every level (price, total quantity, order count); that is verified on synthetic data, including a mutation test (corrupting a few orders by one share left the touch correct in 6/6 runs, so a touch-only check would pass them all; the depth check flagged 5/6) -- but it has **not yet been re-run on the real file**. (c) Partial cancels (`X`) are rare in this file (1-54 per symbol at these cut points), so that path is exercised but thinly. (d) The throughput figure is reference-only and includes decompression; no engine-mode throughput is claimed. (e) One machine, one run per cell, no repeat-run variance measured.
+**3. Engine vs reference, FULL book** (`scripts/real_day_check.sh`: every price level's price, total quantity and resting-order count, at 25/50/75/90% of the file's 29,156,757 messages):
+
+| Symbol | Cut | Messages read | Msgs to engine | Levels compared (bid+ask) | Fills | Crossed | Anomalies | Mismatched levels |
+|---|---|---|---|---|---|---|---|---|
+| AAPL | 25% | 7,289,189 | 6,609 | 10+7 | 0 | 0 | 0 | 0 |
+| AAPL | 50% | 14,578,378 | 30,257 | 7+8 | 0 | 0 | 0 | 0 |
+| AAPL | 75% | 21,867,567 | 50,885 | 9+5 | 0 | 0 | 0 | 0 |
+| AAPL | 90% | 26,241,081 | 62,406 | 10+5 | 0 | 0 | 0 | 0 |
+| SPY | 25% | 7,289,189 | 172,692 | 16+13 | 0 | 0 | 0 | 0 |
+| SPY | 50% | 14,578,378 | 311,315 | 22+12 | 0 | 0 | 0 | 0 |
+| SPY | 75% | 21,867,567 | 462,706 | 21+13 | 0 | 0 | 0 | 0 |
+| SPY | 90% | 26,241,081 | 554,639 | 22+13 | 0 | 0 | 0 | 0 |
+
+All 8 runs agree: 193 levels, 1,651,509 messages through the real matching engine across the runs. The full-depth comparison is the one validated by a mutation test (corrupting a few orders by one share left the touch correct in 6/6 synthetic runs; the depth check flagged 5/6).
+
+**What this does not show.** (a) Nasdaq BX is a small venue -- 15-60 resting orders per symbol -- so the engine's 65,536-order capacity (BUGS_FOUND.md #17) was never approached; that needs a main-venue day. (b) Levels are compared on price, total quantity and order count, **not FIFO order within a level**: the engine tracks queue priority, the reference book does not. (c) Partial cancels (`X`) are rare in this file (1-54 per symbol at the first-run cut points), so that path is exercised but thinly. (d) The throughput figure is reference-only and includes decompression; no engine-mode throughput is claimed. (e) One machine, one run per cell, no repeat-run variance measured. (f) The reference book and the translator are both mine, and both follow my reading of the spec; independence comes from the third-party oracle test for field decoding and from the real file itself, where a semantic misreading would show up as unknown references, leftover orders at end of day, or crossed books -- none did.
 
 ## Isolated-core (fill on real hardware)
 
