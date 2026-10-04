@@ -6,6 +6,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: install
         run: sudo apt-get update && sudo apt-get install -y cmake g++
       - name: configure Release
@@ -14,6 +17,21 @@ jobs:
         run: cmake --build build -j 2
       - name: integration tests
         run: ctest --test-dir build --output-on-failure
+      - name: install the third-party ITCH oracle used to generate test data
+        run: pip install -r scripts/requirements.txt
+      - name: checked-in ITCH test data is reproducible from the oracle
+        run: |
+          python3 scripts/gen_itch50_oracle.py /tmp/regen
+          for f in itch50_oracle.txt synth_day.itch synth_day.expected.json; do cmp /tmp/regen/$f tests/data/$f; done
+      - name: replay at scale within engine capacity (engine book must equal reference)
+        run: |
+          python3 scripts/gen_itch50_scale.py /tmp/ok.itch 1500000 40000 > /dev/null
+          ./build/replay_itch50 /tmp/ok.itch --symbol SYNA --log /tmp/ok_fills.log
+      - name: replay at scale beyond engine capacity must be detected, not compared
+        run: |
+          python3 scripts/gen_itch50_scale.py /tmp/over.itch 1000000 1000000000 > /dev/null
+          set +e; ./build/replay_itch50 /tmp/over.itch --symbol SYNA --log /tmp/over_fills.log; rc=$?; set -e
+          test $rc -eq 4
       - name: prove CHECK active under Release
         run: |
           cmake --build build -j 2 --target test_check_macro_fails
