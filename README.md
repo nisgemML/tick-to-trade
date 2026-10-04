@@ -87,7 +87,15 @@ gzip -dc 01302020.NASDAQ_ITCH50.gz | ./build/replay_itch50 - --symbol AAPL --eng
 
 Exit codes: `0` engine book matches the reference, `1` it disagrees, `2` usage/IO, `3` symbol not found, `4` the symbol's book exceeded the engine's fixed 65,536-order capacity (use `--no-engine`, or a less active symbol). The pre-open book on a real day is legitimately crossed until the opening cross runs, which is why `--engine-start-ns` exists.
 
-**Honest status:** this has been verified against spec-accurate synthetic data and a third-party ITCH implementation, including at 1.5M-message scale — but **not yet run on a real NASDAQ file** (the files are multi-GB and were not reachable from the environment this was built in). The first real run is the real test; BUGS_FOUND.md #15-17 are what the preparation for it turned up.
+**Reproduce on any real file** (compares the engine's *full* book, every level's price, quantity and order count, with the reference at 25/50/75/90% of the day):
+
+```bash
+scripts/real_day_check.sh ~/itch/20191230.BX_ITCH_50.gz ./build/replay_itch50 AAPL SPY
+```
+
+**Honest status.** Run on a real NASDAQ file: **Nasdaq BX, 2019-12-30** (`20191230.BX_ITCH_50.gz`, 29,156,757 messages). The whole file parses with 0 malformed/truncated frames; AAPL's reference book sees 34,509 adds, 1,452 executions, 265 replaces and 33,425 deletes with 0 unknown references, 0 over-reductions and 0 crossed states, and **ends the day empty** (which it must -- a misread shares field anywhere would leave orders behind). The engine's best bid/ask (price and quantity) equals the reference at 3 cut points for each of AAPL and SPY, with 0 fills. See BENCHMARK_RESULTS.md for the table.
+
+What that does **not** show: Nasdaq BX is a small venue (15-60 resting orders per symbol here), so it says nothing about the engine's 65,536-order capacity -- that needs a main-venue day. The BX run compared the touch only; full-depth comparison was added afterwards and is validated on synthetic data (including a mutation test it catches and a touch-only check misses) but has not yet been re-run on the real file. BUGS_FOUND.md #15-17 are what the preparation turned up; the real run itself found no new bug.
 
 ## Tests
 

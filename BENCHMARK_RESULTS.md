@@ -106,6 +106,25 @@ measure), and the magnitude may not hold at a different scale, access
 pattern, or on real multi-socket hardware — those would need to be
 measured separately, not assumed from this number.
 
+## Real NASDAQ data: Nasdaq BX, 2019-12-30
+
+`20191230.BX_ITCH_50.gz` from NASDAQ's public sample server (emi.nasdaq.com): 390,561,039 bytes compressed, matching NASDAQ's directory listing to the byte; 29,156,757 messages. Run on WSL2 Ubuntu on an Intel Core Ultra 7 155H laptop (8 logical cores exposed to Linux), GCC 15.2, `Release`. This is real exchange data, but a *small venue*: see "What this does not show".
+
+**1. Parse + reference book, AAPL, whole file** (`gzip -dc ... | replay_itch50 - --symbol AAPL --no-engine`): **3.6 s wall including decompression, about 8M messages/s end to end.** 0 malformed, 0 truncated frames. 34,509 adds (34,496 `A` + 13 `F`), 1,452 executions (1,436 `E` + 16 `C`), 2 partial cancels, 265 replaces, 33,425 deletes; 0 unknown references, 0 over-reductions, 0 duplicates, 0 crossed states. The book **ends the day empty** -- NASDAQ removes everything by close, so a misread shares field in any of add/execute/cancel/replace would leave orders behind.
+
+**2. Engine vs reference, best bid/ask (price and quantity), at cut points** -- the real pipeline and matching engine fed by the translator, `--max-msgs N`:
+
+| Symbol | Messages read | Msgs to engine | Resting orders | Best bid x qty / ask x qty | Fills | Result |
+|---|---|---|---|---|---|---|
+| AAPL | 8,000,000 | 9,162 | 17 | 285.59 x 100 / 285.89 x 100 | 0 | engine == reference |
+| AAPL | 16,000,000 | 33,802 | 16 | 291.23 x 100 / 291.45 x 15 | 0 | engine == reference |
+| AAPL | 24,000,000 | 55,939 | 15 | 291.11 x 100 / 291.56 x 100 | 0 | engine == reference |
+| SPY | 8,000,000 | 179,832 | 47 | 320.64 x 100 / 320.68 x 200 | 0 | engine == reference |
+| SPY | 16,000,000 | 344,816 | 57 | 321.63 x 103 / 321.65 x 16 | 0 | engine == reference |
+| SPY | 24,000,000 | 506,358 | 56 | 321.16 x 131 / 321.18 x 20 | 0 | engine == reference |
+
+**What this does not show.** (a) Nasdaq BX is a small venue -- 15-60 resting orders per symbol, so the engine's 65,536-order capacity (BUGS_FOUND.md #17) was never approached; that needs a main-venue day. (b) This run compared the touch only. The tool now compares every level (price, total quantity, order count); that is verified on synthetic data, including a mutation test (corrupting a few orders by one share left the touch correct in 6/6 runs, so a touch-only check would pass them all; the depth check flagged 5/6) -- but it has **not yet been re-run on the real file**. (c) Partial cancels (`X`) are rare in this file (1-54 per symbol at these cut points), so that path is exercised but thinly. (d) The throughput figure is reference-only and includes decompression; no engine-mode throughput is claimed. (e) One machine, one run per cell, no repeat-run variance measured.
+
 ## Isolated-core (fill on real hardware)
 
 ```bash
