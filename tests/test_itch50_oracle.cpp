@@ -70,7 +70,8 @@ int main() {
             CHECK_EQ(o.shares, num("shares"), "shares"); CHECK_EQ(o.price, num("price"), "price"); CHECK_EQ(o.has_mpid, type == 'F', "has_mpid");
             std::string hx; for (int i = 0; i < 8; ++i) { char c[3]; std::snprintf(c, 3, "%02x", (uint8_t)o.stock[i]); hx += c; }
             ++g_checks; if (hx != kv.at("stock")) { ++g_failures; std::fprintf(stderr, "FAIL line %zu stock\n", lineno); }
-            if (type == 'A' && first_add_body.empty()) first_add_body = b; break; }
+            if (type == 'A' && first_add_body.empty()) first_add_body = b;
+            break; }
         case 'E': case 'C': { OrderExecuted o; ++g_checks; if (!OrderExecuted::parse(b.data(), b.size(), o)) { ++g_failures; break; }
             CHECK_EQ(o.order_ref, num("order_ref"), "order_ref"); CHECK_EQ(o.shares, num("shares"), "shares"); CHECK_EQ(o.match, num("match"), "match");
             if (type == 'C') { CHECK_EQ(o.price, num("price"), "price"); CHECK_EQ((uint64_t)(uint8_t)o.printable, (uint64_t)(uint8_t)kv.at("printable")[0], "printable"); } break; }
