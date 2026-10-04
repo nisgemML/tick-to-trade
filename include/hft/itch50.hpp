@@ -133,27 +133,29 @@ struct Bbo {
     std::size_t bid_levels{0}, ask_levels{0}, orders{0};
 };
 
+struct DepthLevel { uint32_t price; uint64_t qty; uint32_t orders; };
+
 class RefBook {
 public:
     struct Anomalies { uint64_t unknown_ref{0}, over_reduce{0}, duplicate_ref{0}; };
 
     void add(uint64_t ref, char side, uint32_t price, uint32_t qty) {
         if (!orders_.emplace(ref, RefOrder{side, price, qty}).second) { ++an_.duplicate_ref; return; }
-        level(side)[price] += qty;
+        Level& l = level(side)[price]; l.qty += qty; ++l.orders;
     }
     void reduce(uint64_t ref, uint32_t by) {
         auto it = orders_.find(ref);
         if (it == orders_.end()) { ++an_.unknown_ref; return; }
         uint32_t d = by;
         if (by > it->second.qty) { ++an_.over_reduce; d = it->second.qty; }
-        sub_level(it->second.side, it->second.price, d);
         it->second.qty -= d;
+        sub_level(it->second.side, it->second.price, d, it->second.qty == 0);
         if (it->second.qty == 0) orders_.erase(it);
     }
     void remove(uint64_t ref) {
         auto it = orders_.find(ref);
         if (it == orders_.end()) { ++an_.unknown_ref; return; }
-        sub_level(it->second.side, it->second.price, it->second.qty);
+        sub_level(it->second.side, it->second.price, it->second.qty, true);
         orders_.erase(it);
     }
     void replace(uint64_t orig, uint64_t nref, uint32_t shares, uint32_t price) {
@@ -165,24 +167,34 @@ public:
     }
     [[nodiscard]] Bbo bbo() const {
         Bbo b; b.orders = orders_.size(); b.bid_levels = bids_.size(); b.ask_levels = asks_.size();
-        if (!bids_.empty()) { b.bid_px = bids_.rbegin()->first; b.bid_qty = bids_.rbegin()->second; }
-        if (!asks_.empty()) { b.ask_px = asks_.begin()->first;  b.ask_qty = asks_.begin()->second; }
+        if (!bids_.empty()) { b.bid_px = bids_.rbegin()->first; b.bid_qty = bids_.rbegin()->second.qty; }
+        if (!asks_.empty()) { b.ask_px = asks_.begin()->first;  b.ask_qty = asks_.begin()->second.qty; }
         return b;
+    }
+    // Every price level, best first (bids descending, asks ascending), with total quantity and
+    // number of resting orders -- the same three things the engine's depth API reports.
+    [[nodiscard]] std::vector<DepthLevel> depth(char side) const {
+        std::vector<DepthLevel> v;
+        if (side == 'B') for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) v.push_back({it->first, it->second.qty, it->second.orders});
+        else             for (auto it = asks_.begin(); it != asks_.end(); ++it)   v.push_back({it->first, it->second.qty, it->second.orders});
+        return v;
     }
     [[nodiscard]] bool crossed() const {
         return !bids_.empty() && !asks_.empty() && bids_.rbegin()->first >= asks_.begin()->first;
     }
     [[nodiscard]] const Anomalies& anomalies() const { return an_; }
 private:
-    std::map<uint32_t, uint64_t>& level(char s) { return s == 'B' ? bids_ : asks_; }
-    void sub_level(char s, uint32_t px, uint32_t q) {
+    struct Level { uint64_t qty{0}; uint32_t orders{0}; };
+    std::map<uint32_t, Level>& level(char s) { return s == 'B' ? bids_ : asks_; }
+    void sub_level(char s, uint32_t px, uint32_t q, bool order_gone) {
         auto& m = level(s); auto it = m.find(px);
         if (it == m.end()) return;
-        it->second -= std::min<uint64_t>(it->second, q);
-        if (it->second == 0) m.erase(it);
+        it->second.qty -= std::min<uint64_t>(it->second.qty, q);
+        if (order_gone && it->second.orders > 0) --it->second.orders;
+        if (it->second.qty == 0) m.erase(it);
     }
     std::unordered_map<uint64_t, RefOrder> orders_;
-    std::map<uint32_t, uint64_t> bids_, asks_;
+    std::map<uint32_t, Level> bids_, asks_;
     Anomalies an_;
 };
 

@@ -54,6 +54,10 @@ for sym, e in exp['symbols'].items():
             check(en['sent'] == en['processed'] and en['sent'] > 0, f"engine processed {en['processed']} of {en['sent']} sent")
             for k in ('bid_px', 'bid_qty', 'ask_px', 'ask_qty'):
                 check(en[k] == e[k], f"engine.{k} {en[k]} != expected {e[k]}")
+            dp = en['depth']   # FULL book: every level's price, total quantity and order count, engine vs reference
+            check(dp['mismatched_levels'] == 0, f"{dp['mismatched_levels']} price level(s) differ between engine and reference")
+            check(dp['bid_levels_compared'] == e['bid_levels'] and dp['ask_levels_compared'] == e['ask_levels'],
+                  f"compared {dp['bid_levels_compared']}+{dp['ask_levels_compared']} levels, expected {e['bid_levels']}+{e['ask_levels']}")
 
 # capacity overflow must be detected and reported distinctly (exit 4), never silently compared
 rc, r, err = run('SYNB', ['--assume-engine-capacity', '100'])

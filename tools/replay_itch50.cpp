@@ -164,7 +164,26 @@ int main(int argc, char** argv) {
     auto px = [](engine::Price p) -> uint64_t { return p == engine::PRICE_INVALID ? 0 : static_cast<uint64_t>(p / 100); };
     const PipelineResult& res = pipeline.result();
     const bool cap_exceeded = first_exceeded_at != 0;
-    const bool agree = !have_engine || (!cap_exceeded &&
+
+    // Full-depth comparison: every price level, with its total quantity and resting-order count,
+    // engine vs reference -- not just the touch. (Safe to read: the engine thread has been joined.)
+    std::size_t depth_bid_n = 0, depth_ask_n = 0, depth_mismatch = 0;
+    if (have_engine && !cap_exceeded) {
+        const engine::OrderBook* bk = pipeline.engine().book_for(pcfg.symbol);
+        std::vector<engine::PriceLevel> eb(engine::OrderBook::kMaxLevels), ea(engine::OrderBook::kMaxLevels);
+        const std::size_t nb = bk->bid_depth(eb), na = bk->ask_depth(ea);
+        const auto rbv = ref.depth('B'), rav = ref.depth('S');
+        auto cmp = [&](const std::vector<engine::PriceLevel>& e, std::size_t ne, const std::vector<itch50::DepthLevel>& r, std::size_t& counted) {
+            counted = std::max<std::size_t>(ne, r.size());
+            for (std::size_t i = 0; i < counted; ++i) {
+                if (i >= ne || i >= r.size()) { ++depth_mismatch; continue; }
+                if (e[i].price / 100 != static_cast<engine::Price>(r[i].price) || e[i].total_qty != r[i].qty || e[i].order_count != r[i].orders) ++depth_mismatch;
+            }
+        };
+        cmp(eb, nb, rbv, depth_bid_n); cmp(ea, na, rav, depth_ask_n);
+    }
+    const bool depth_ok = depth_mismatch == 0;
+    const bool agree = !have_engine || (!cap_exceeded && depth_ok &&
         (px(q.bid_price) == rb.bid_px && q.bid_qty == rb.bid_qty && px(q.ask_price) == rb.ask_px && q.ask_qty == rb.ask_qty &&
          res.engine_messages == sent));
     const auto& tc = tr.counters(); const auto& an = ref.anomalies();
@@ -182,6 +201,9 @@ int main(int argc, char** argv) {
             "orders (fixed-size slot pool, documented in options-engine LIMITATIONS.md), so its book is truncated and the comparison below is NOT\n"
             "meaningful. Re-run with --no-engine for the reference book, or choose a less active symbol.\n",
             U(peak_resting), U(capacity), U(first_exceeded_at));
+    if (have_engine && !cap_exceeded)
+        std::fprintf(stderr, "depth:    compared %zu bid + %zu ask levels (price, total qty, order count): %s\n", depth_bid_n, depth_ask_n,
+                     depth_ok ? "all equal" : "MISMATCH");
     if (have_engine)
         std::fprintf(stderr, "engine:   sent=%llu processed=%llu fills=%llu matches=%llu bbo=%llu x %u / %llu x %u retries=%llu | engine book %s reference\n",
             U(sent), U(res.engine_messages), U(res.fills), U(res.engine_matches), U(px(q.bid_price)), q.bid_qty, U(px(q.ask_price)), q.ask_qty, U(retries), agree ? "MATCHES" : "DISAGREES WITH");
@@ -196,9 +218,9 @@ int main(int argc, char** argv) {
                     rb.orders, rb.bid_px, U(rb.bid_qty), rb.ask_px, U(rb.ask_qty), rb.bid_levels, rb.ask_levels, U(crossed_events), U(an.unknown_ref), U(an.over_reduce), U(an.duplicate_ref));
         std::printf("\"translator\":{\"adds\":%llu,\"execs\":%llu,\"partial_cancels\":%llu,\"deletes\":%llu,\"replaces\":%llu,\"unknown_ref\":%llu},",
                     U(tc.adds), U(tc.execs), U(tc.partial_cancels), U(tc.deletes), U(tc.replaces), U(tc.unknown_ref));
-        std::printf("\"engine\":{\"ran\":%s,\"sent\":%llu,\"processed\":%llu,\"fills\":%llu,\"bid_px\":%llu,\"bid_qty\":%u,\"ask_px\":%llu,\"ask_qty\":%u,\"capacity\":%llu,\"peak_resting\":%llu,\"capacity_exceeded\":%s},\"agree\":%s}\n",
+        std::printf("\"engine\":{\"ran\":%s,\"sent\":%llu,\"processed\":%llu,\"fills\":%llu,\"bid_px\":%llu,\"bid_qty\":%u,\"ask_px\":%llu,\"ask_qty\":%u,\"capacity\":%llu,\"peak_resting\":%llu,\"capacity_exceeded\":%s,\"depth\":{\"bid_levels_compared\":%zu,\"ask_levels_compared\":%zu,\"mismatched_levels\":%zu}},\"agree\":%s}\n",
                     have_engine ? "true" : "false", U(sent), U(res.engine_messages), U(res.fills), U(px(q.bid_price)), q.bid_qty, U(px(q.ask_price)), q.ask_qty,
-                    U(capacity), U(peak_resting), cap_exceeded ? "true" : "false", agree ? "true" : "false");
+                    U(capacity), U(peak_resting), cap_exceeded ? "true" : "false", depth_bid_n, depth_ask_n, depth_mismatch, agree ? "true" : "false");
     }
     if (target < 0) { std::fprintf(stderr, "symbol '%s' not found in any Stock Directory ('R') message\n", a.symbol.c_str()); return 3; }
     if (cap_exceeded) return 4;
