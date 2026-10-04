@@ -109,6 +109,23 @@ add_executable(test_live_multicast tests/test_live_multicast.cpp)
 target_link_libraries(test_live_multicast PRIVATE hft_iface)
 add_test(NAME live_multicast COMMAND test_live_multicast)
 
+# Real NASDAQ ITCH 5.0 support: spec-accurate parser + reference book (see BUGS_FOUND.md #15, #16).
+add_executable(replay_itch50 tools/replay_itch50.cpp)
+target_link_libraries(replay_itch50 PRIVATE hft_iface)
+
+add_executable(test_itch50_oracle tests/test_itch50_oracle.cpp)
+target_link_libraries(test_itch50_oracle PRIVATE hft_iface)
+target_compile_definitions(test_itch50_oracle PRIVATE
+    ITCH50_ORACLE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/itch50_oracle.txt")
+add_test(NAME itch50_oracle COMMAND test_itch50_oracle)
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_test(NAME itch50_replay_e2e COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts/e2e_itch50.py
+        $<TARGET_FILE:replay_itch50> ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
+endif()
+
 # Not in ctest — used by CI to prove CHECK is active under Release (-DNDEBUG).
 add_executable(test_check_macro_fails tests/test_check_macro_fails.cpp)
 target_link_libraries(test_check_macro_fails PRIVATE hft_iface)

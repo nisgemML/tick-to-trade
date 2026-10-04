@@ -1,0 +1,63 @@
+{
+ "engine_start_ns": 25200047989147,
+ "messages_total": 3004,
+ "symbols": {
+  "SYNA": {
+   "ask_levels": 48,
+   "ask_px": 1000000,
+   "ask_qty": 32,
+   "bid_levels": 44,
+   "bid_px": 999900,
+   "bid_qty": 251,
+   "locate": 1,
+   "orders": 263,
+   "per_type": {
+    "A": 308,
+    "C": 38,
+    "D": 92,
+    "E": 108,
+    "F": 53,
+    "U": 57,
+    "X": 111
+   }
+  },
+  "SYNB": {
+   "ask_levels": 48,
+   "ask_px": 1000000,
+   "ask_qty": 287,
+   "bid_levels": 48,
+   "bid_px": 999900,
+   "bid_qty": 816,
+   "locate": 2,
+   "orders": 331,
+   "per_type": {
+    "A": 360,
+    "C": 44,
+    "D": 79,
+    "E": 121,
+    "F": 52,
+    "U": 57,
+    "X": 102
+   }
+  },
+  "SYNC": {
+   "ask_levels": 51,
+   "ask_px": 1000000,
+   "ask_qty": 280,
+   "bid_levels": 46,
+   "bid_px": 999900,
+   "bid_qty": 677,
+   "locate": 3,
+   "orders": 323,
+   "per_type": {
+    "A": 363,
+    "C": 42,
+    "D": 77,
+    "E": 122,
+    "F": 43,
+    "U": 59,
+    "X": 110
+   }
+  }
+ }
+}
