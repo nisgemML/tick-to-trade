@@ -50,11 +50,11 @@ std::vector<uint8_t> mold_packet(uint64_t seq, const std::vector<uint8_t>& body)
 std::vector<uint8_t> make_add(uint64_t ref, uint32_t price) {
     std::vector<uint8_t> b(36, 0);
     b[0] = 'A';
-    put_be64(b.data() + 7, ref);
-    b[15] = 'B';
-    put_be32(b.data() + 16, 10);
-    std::memcpy(b.data() + 20, "GBNM0001", 8);
-    put_be32(b.data() + 28, price);
+    put_be64(b.data() + 11, ref);
+    b[19] = 'B';
+    put_be32(b.data() + 20, 10);
+    std::memcpy(b.data() + 24, "GBNM0001", 8);
+    put_be32(b.data() + 32, price);
     return b;
 }
 

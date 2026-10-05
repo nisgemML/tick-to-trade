@@ -7,10 +7,10 @@
 // reading of the NASDAQ spec, with the parser under test. Includes all-zero and all-max
 // boundary vectors for every field width.
 //
-// Also pins a finding (BUGS_FOUND.md #15): the vendored feed::ItchAddOrder does NOT read the
-// real ITCH 5.0 layout. The final section asserts that, on spec-accurate bytes, the legacy
-// parser does not recover the true order_ref / price -- so if someone "fixes" the vendored
-// parser later, this test flips and forces the docs to be updated with it.
+// Also checks (BUGS_FOUND.md #15, fixed upstream) that the vendored feed::ItchAddOrder reads the
+// real ITCH 5.0 layout: the final section requires it to agree with itch50.hpp on every
+// Add Order field of an oracle message. (It previously asserted DISagreement, as a tripwire
+// that would force this file and BUGS_FOUND.md to be updated when the upstream fix landed.)
 
 #include "hft/itch50.hpp"
 #include "feed/wire_format.hpp"
@@ -95,17 +95,21 @@ int main(int argc, char** argv) {
         AddOrder o; ++g_checks; if (AddOrder::parse(short_add.data(), short_add.size(), o)) { ++g_failures; std::fprintf(stderr, "35-byte Add Order accepted\n"); }
     }
 
-    // Pin the finding: the vendored legacy parser misreads real ITCH 5.0 bytes.
+    // BUGS_FOUND.md #15, now fixed upstream: the vendored udp-multicast-receiver
+    // parser must agree with the spec-accurate decoder on oracle bytes. This
+    // used to assert DISagreement (a tripwire for exactly this fix).
     {
-        AddOrder good; const std::size_t lineno = 0; const char type = '?'; (void)lineno; (void)type;
+        AddOrder good;
         ++g_checks;
         if (first_add_body.empty() || !AddOrder::parse(first_add_body.data(), first_add_body.size(), good)) { ++g_failures; }
         else {
-            feed::ItchAddOrder legacy{};
-            const bool ok = feed::ItchAddOrder::parse(first_add_body.data(), first_add_body.size(), legacy);
+            feed::ItchAddOrder v{};
+            const bool ok = feed::ItchAddOrder::parse(first_add_body.data(), first_add_body.size(), v);
             ++g_checks;
-            if (ok && legacy.order_ref == good.order_ref && legacy.price == good.price) {
-                ++g_failures; std::fprintf(stderr, "legacy vendored parser now agrees with the spec -- update BUGS_FOUND.md #15 and this test\n");
+            if (!ok || v.order_ref != good.order_ref || v.price != good.price || v.side != good.side ||
+                v.shares != good.shares || std::memcmp(v.stock, good.stock, 8) != 0 ||
+                v.timestamp_ns != good.h.timestamp_ns || v.stock_locate != good.h.locate) {
+                ++g_failures; std::fprintf(stderr, "vendored feed::ItchAddOrder disagrees with the spec on oracle bytes\n");
             }
         }
     }

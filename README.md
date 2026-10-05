@@ -104,11 +104,11 @@ What that does **not** show: Nasdaq BX is a small venue (15-60 resting orders pe
 | `pipeline_smoke` | End-to-end events -> fills |
 | `backpressure` | Inbound SPSC rejects when full, and it's counted |
 | `conservation` | Same stream twice -> identical fill counts/qty |
-| `feed_adapter` | ITCH Add -> MarketDataMsg via GapBuffer, including the decoded price |
+| `feed_adapter` | ITCH A/X/E/U/D -> MarketDataMsg via the real GapBuffer: partial cancel and execution become remaining-size modifies, replace becomes cancel + new with inherited side, unknown refs are counted (BUGS_FOUND.md #16) |
 | `gap_injection` | A real sequence gap is detected, held, and correctly reordered on fill |
 | `market_maker` | Exact round-trip P&L, correct fill-side attribution (aggressor *and* passive), skew direction, position-limit enforcement |
 | `live_multicast` | Real UDP multicast socket (not a function call) delivers every packet correctly through GapBuffer -> ItchAdapter -> Pipeline -> fills |
-| `itch50_oracle` | `itch50.hpp` vs an independent third-party ITCH 5.0 implementation: 1,214 messages, 10,327 field checks incl. boundary values; pins that the vendored legacy parser does *not* match the spec |
+| `itch50_oracle` | `itch50.hpp` vs an independent third-party ITCH 5.0 implementation: 1,214 messages, 10,327 field checks incl. boundary values; also requires the vendored feed parser to agree with it (BUGS_FOUND.md #15, fixed upstream) |
 | `itch50_replay_e2e` | Real NASDAQ file framing through the real pipeline and engine, 3 symbols x (from start / mid-day snapshot / reference only): engine book == independently derived book, 0 fills, capacity-overflow detection |
 | `check_macro_fails` (CI-only, not ctest) | Proves the test framework itself can't silently no-op under `-DNDEBUG` |
 
