@@ -6,6 +6,12 @@
 #   scripts/real_day_check.sh <file | file.gz> <path/to/replay_itch50> SYMBOL [SYMBOL ...]
 #   scripts/real_day_check.sh ~/itch/20191230.BX_ITCH_50.gz ./build/replay_itch50 AAPL SPY
 #
+# ENGINE_START_NS=T (optional): start the engine from a snapshot of the reference book at T
+# nanoseconds after midnight, passed through as --engine-start-ns. Needed on a main-venue day,
+# where the pre-open book is legitimately crossed until the opening cross; e.g. 09:30:00 is
+#   ENGINE_START_NS=34200000000000 scripts/real_day_check.sh <NASDAQ file> ./build/replay_itch50 AAPL
+# The reference-only counting pass ignores it.
+#
 # Cut points are 25/50/75/90% of the file's message count (found with a quick reference-only pass).
 # Exit 0 only if every run agrees (a run whose book outgrows the engine's capacity is reported as
 # CAPACITY and does not count as a failure -- the engine cannot hold it; see BUGS_FOUND.md #17).
@@ -21,7 +27,7 @@ fail=0
 for sym in "$@"; do
   for pct in 25 50 75 90; do
     n=$(( total * pct / 100 ))
-    js=$(run --symbol "$sym" --max-msgs "$n")
+    js=$(run --symbol "$sym" --max-msgs "$n" ${ENGINE_START_NS:+--engine-start-ns "$ENGINE_START_NS"})
     python3 - "$sym" "$pct" "$n" "$js" << 'PY' || fail=1
 import json, sys
 sym, pct, n, js = sys.argv[1:5]
