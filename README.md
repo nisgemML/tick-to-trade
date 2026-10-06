@@ -91,11 +91,15 @@ Exit codes: `0` engine book matches the reference, `1` it disagrees, `2` usage/I
 
 ```bash
 scripts/real_day_check.sh ~/itch/20191230.BX_ITCH_50.gz ./build/replay_itch50 AAPL SPY
+# main venue: start the engine after the opening cross
+ENGINE_START_NS=34200000000000 scripts/real_day_check.sh ~/itch/01302020.NASDAQ_ITCH50.gz ./build/replay_itch50 AAPL MSFT TSLA
 ```
 
 **Honest status.** Run on a real NASDAQ file: **Nasdaq BX, 2019-12-30** (`20191230.BX_ITCH_50.gz`, 29,156,757 messages). The whole file parses with 0 malformed/truncated frames; AAPL's reference book sees 34,509 adds, 1,452 executions, 265 replaces and 33,425 deletes with 0 unknown references, 0 over-reductions and 0 crossed states, and **ends the day empty** (which it must -- a misread shares field anywhere would leave orders behind). Replayed through the real pipeline and matching engine for AAPL and SPY at 25/50/75/90% of the day, **the engine's full book -- every price level's price, total quantity and resting-order count, 193 levels in all -- equals the independent reference at all 8 cut points**, with 0 fills. See BENCHMARK_RESULTS.md for the table.
 
-What that does **not** show: Nasdaq BX is a small venue (15-60 resting orders per symbol here), so it says nothing about the engine's 65,536-order capacity -- that needs a main-venue day. Levels are compared on price, quantity and order count, **not FIFO order within a level** (the engine tracks queue priority; the reference does not). Partial cancels are rare in this file, so that path is exercised but thinly. BUGS_FOUND.md #15-17 are what the preparation turned up; the real run itself found no new bug.
+**And on a main-venue day: NASDAQ, 2020-01-30** (`01302020.NASDAQ_ITCH50.gz`, **423,285,709 messages**). For AAPL, MSFT and TSLA at 25/50/75/90% of the day, the engine's full book equals the independent reference at **all 12 cut points: 52,745 price levels compared, 0 mismatched, 12.8M messages through the real matching engine**. Books here are around 3,700-5,100 price levels deep per cut point, against BX's 14-35. The engine starts from a reference snapshot at 09:30 (`ENGINE_START_NS`), because a main-venue pre-open book is legitimately crossed. Table in BENCHMARK_RESULTS.md.
+
+What that does **not** show: **every run has 0 fills**, because a replay rebuilds the book from NASDAQ's own messages. So this validates book maintenance at real depth, not crossing (that is the conservation test's job). None of the main-venue books reached the 65,536-order capacity at these cut points, so the overflow path is still validated only synthetically (BUGS_FOUND.md #17). Levels are compared on price, quantity and order count, **not FIFO order within a level** (the engine tracks queue priority; the reference does not). Partial cancels are rare in this file, so that path is exercised but thinly. BUGS_FOUND.md #15-17 are what the preparation turned up; the real run itself found no new bug.
 
 ## Tests
 

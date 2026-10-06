@@ -106,6 +106,48 @@ measure), and the magnitude may not hold at a different scale, access
 pattern, or on real multi-socket hardware — those would need to be
 measured separately, not assumed from this number.
 
+## Real NASDAQ data: main venue, 2020-01-30
+
+`01302020.NASDAQ_ITCH50.gz` from NASDAQ's public sample server: 5,597,158,940 bytes, matching the
+directory listing to the byte, `gzip -t` clean, md5 `baa0a7dfbf4384841a01594cd931e5c0`;
+**423,285,709 messages**. Same machine as the BX run (WSL2 Ubuntu, Intel Core Ultra 7 155H),
+`Release`. Run with `scripts/real_day_check.sh` and `ENGINE_START_NS=34200000000000`: the engine
+starts from a snapshot of the reference book at 09:30:00, because a main-venue pre-open book is
+legitimately crossed until the opening cross. The reference book runs from the first message.
+
+**Engine vs reference, FULL book** (every price level's price, total quantity and resting-order
+count) at 25/50/75/90% of the file:
+
+| Symbol | Cut | Messages read | Msgs to engine | Levels compared (bid+ask) | Fills | Crossed | Anomalies | Mismatched levels |
+|---|---|---|---|---|---|---|---|---|
+| AAPL | 25% | 105,821,427 | 522,586 | 3,781+1,166 | 0 | 0 | 0 | 0 |
+| AAPL | 50% | 211,642,854 | 1,083,780 | 3,723+1,209 | 0 | 0 | 0 | 0 |
+| AAPL | 75% | 317,464,281 | 1,634,225 | 3,722+1,178 | 0 | 0 | 0 | 0 |
+| AAPL | 90% | 380,957,138 | 1,930,994 | 3,875+1,224 | 0 | 0 | 0 | 0 |
+| MSFT | 25% | 105,821,427 | 541,528 | 2,951+817 | 0 | 0 | 0 | 0 |
+| MSFT | 50% | 211,642,854 | 1,040,870 | 2,939+835 | 0 | 0 | 0 | 0 |
+| MSFT | 75% | 317,464,281 | 1,518,446 | 2,984+765 | 0 | 0 | 0 | 0 |
+| MSFT | 90% | 380,957,138 | 1,732,677 | 3,052+792 | 0 | 0 | 0 | 0 |
+| TSLA | 25% | 105,821,427 | 354,780 | 3,438+1,085 | 0 | 0 | 0 | 0 |
+| TSLA | 50% | 211,642,854 | 640,375 | 3,479+1,049 | 0 | 0 | 0 | 0 |
+| TSLA | 75% | 317,464,281 | 842,972 | 3,160+1,099 | 0 | 0 | 0 | 0 |
+| TSLA | 90% | 380,957,138 | 923,651 | 3,192+1,230 | 0 | 0 | 0 | 0 |
+
+**All 12 runs agree: 52,745 price levels compared, 0 mismatched; 12,766,884 messages through the
+real matching engine across the runs.** No run reported `CAPACITY`: at every cut point each of
+these three books held at most 65,536 resting orders.
+
+**What this does not show.** (a) **`fills=0` everywhere.** The replay rebuilds the book from
+NASDAQ's own add/execute/cancel/replace/delete messages, so it validates *book maintenance at
+real depth*, around 4,000-5,000 price levels per book, not the engine's crossing logic. Matching
+is covered by the 1M-event conservation test against an independent model in options-engine. (b)
+Levels are compared on price, total quantity and order count, not FIFO order within a level (as
+for BX). (c) Three symbols and four cut points, not every symbol at every message. (d) The
+65,536-order capacity was not reached by these books at these cut points, so the overflow path
+remains validated only by the synthetic scale test (BUGS_FOUND.md #17). (e) No engine-mode
+throughput is claimed: each cut point re-streams the file through gzip and the reference book,
+which dominates the wall time.
+
 ## Real NASDAQ data: Nasdaq BX, 2019-12-30
 
 `20191230.BX_ITCH_50.gz` from NASDAQ's public sample server (emi.nasdaq.com): 390,561,039 bytes compressed, matching NASDAQ's directory listing to the byte; 29,156,757 messages. Run on WSL2 Ubuntu on an Intel Core Ultra 7 155H laptop (8 logical cores exposed to Linux), GCC 15.2, `Release`. This is real exchange data, but a *small venue*: see "What this does not show".
