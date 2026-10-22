@@ -62,7 +62,14 @@ int main(int argc, char** argv) {
     const uint64_t n_laps = argc > 1 ? std::stoull(argv[1]) : 200; // 200 * 4096 ~= 820K packets
     constexpr uint64_t kSpan = 4096; // exactly one GapBuffer lap
 
-    auto gap_buf = hft::make_gap_buffer(/*node=*/0);
+    // The stream starts at 1. Without this, GapBuffer syncs to the first
+    // packet it sees -- here a random seq from the first shuffled lap --
+    // and silently treats everything below it as a late join (an earlier
+    // version of this bench delivered 2,084 fewer messages than it sent
+    // for exactly that reason).
+    feed::GapBuffer::Config gcfg;
+    gcfg.expected_first_seq = 1;
+    auto gap_buf = hft::make_gap_buffer(/*node=*/0, gcfg);
     if (!gap_buf) { std::fprintf(stderr, "GapBuffer allocation failed\n"); return 1; }
 #ifdef HFT_HAVE_NUMA
     std::printf("config=NUMA hugepage_backed=%d\n", gap_buf.get_deleter().hugepage_backed());

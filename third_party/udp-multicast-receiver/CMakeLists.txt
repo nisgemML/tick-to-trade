@@ -78,6 +78,10 @@ add_executable(test_feed_arbitrator tests/test_feed_arbitrator.cpp)
 target_link_libraries(test_feed_arbitrator PRIVATE feed_iface)
 add_test(NAME FeedArbitrator COMMAND test_feed_arbitrator)
 
+add_executable(test_retransmit tests/test_retransmit.cpp)
+target_link_libraries(test_retransmit PRIVATE feed_iface)
+add_test(NAME Retransmit COMMAND test_retransmit)
+
 add_executable(test_decision_engine tests/test_decision_engine.cpp)
 target_link_libraries(test_decision_engine PRIVATE feed_iface)
 add_test(NAME DecisionEngine COMMAND test_decision_engine)

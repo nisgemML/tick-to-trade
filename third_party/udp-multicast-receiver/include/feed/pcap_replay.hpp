@@ -117,12 +117,15 @@ public:
         return true;
     }
 
-    // Write a MoldUDP64 heartbeat packet.
-    bool write_heartbeat(uint64_t ts_us, const char* session) noexcept {
+    // Write a MoldUDP64 heartbeat packet. Per the spec its sequence field
+    // is the NEXT sequence number the server will send; receivers use it
+    // to detect tail loss, so pass the real value when you have one.
+    bool write_heartbeat(uint64_t ts_us, const char* session,
+                         uint64_t next_seq = 0) noexcept {
         uint8_t buf[kMoldHeaderSize];
         MoldHeader hdr{};
         std::memcpy(hdr.session, session, 10);
-        hdr.seq_num   = 0;
+        hdr.seq_num   = next_seq;
         hdr.msg_count = 0;
         hdr.serialise(buf);
         return write_packet(ts_us, buf, kMoldHeaderSize);

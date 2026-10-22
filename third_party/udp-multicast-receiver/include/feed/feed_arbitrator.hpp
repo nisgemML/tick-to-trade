@@ -14,7 +14,8 @@
 //
 // A single-line receiver (GapBuffer + MulticastReceiver alone) treats every
 // line-A drop as a gap: it stalls, waits `gap_timeout_ns`, and issues a
-// retransmit request over TCP — a real, measurable latency hit even when
+// retransmit request (a UDP round trip to the re-request server — see
+// retransmit_client.hpp) — a real, measurable latency hit even when
 // line B had the missing packet the entire time. Arbitrating both lines
 // against the same sequence space eliminates that stall in the common case:
 // a drop on one line is invisible as long as the other line delivered the

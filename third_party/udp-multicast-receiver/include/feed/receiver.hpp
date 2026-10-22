@@ -35,6 +35,7 @@
 
 #include "feed/wire_format.hpp"
 #include "feed/gap_buffer.hpp"
+#include "feed/retransmit_client.hpp"
 
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -136,9 +137,21 @@ public:
         return delivered;
     }
 
+    // ── Retransmission ────────────────────────────────────────────────────────
+    //
+    // Route the GapBuffer's retransmit requests to `client` and have run()
+    // poll the client's reply socket on every iteration, so replies are
+    // ingested on the same thread as the multicast line (GapBuffer is not
+    // thread-safe). `client` must outlive this receiver's run().
+    void attach_retransmit_client(RetransmitClient& client) {
+        retx_client_ = &client;
+        client.attach(gap_buf_);
+    }
+
     // ── Busy-poll receive loop ─────────────────────────────────────────────────
     //
-    // Spins calling recv_one() until `running` is set to false.
+    // Spins calling recv_one() (and polling the retransmit client, if one
+    // is attached) until `running` is set to false.
     // Calls gap_buf_.tick() every `tick_interval_ns` nanoseconds.
 
     void run(std::atomic<bool>& running,
@@ -147,6 +160,10 @@ public:
         uint64_t last_tick = monotonic_ns();
         while (running.load(std::memory_order_relaxed)) {
             recv_one();
+            if (retx_client_) {
+                const int d = retx_client_->poll(gap_buf_);
+                if (d > 0) stat_messages_delivered_ += uint64_t(d);
+            }
             const uint64_t now = monotonic_ns();
             if (now - last_tick >= tick_interval_ns) {
                 gap_buf_.tick(now);
@@ -338,6 +355,7 @@ private:
 
     Config     cfg_;
     GapBuffer& gap_buf_;
+    RetransmitClient* retx_client_ = nullptr;
     int        fd_ = -1;
 
     // Single large receive buffer — reused every call to avoid allocations.

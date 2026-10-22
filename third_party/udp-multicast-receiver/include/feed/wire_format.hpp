@@ -8,18 +8,25 @@
 //
 //   [0..9]   Session (10 bytes, ASCII space-padded, NOT null-terminated)
 //   [10..17] Sequence number of the FIRST message in this packet (uint64 BE)
-//   [18..19] Message count (uint16 BE).  Zero = heartbeat.
+//   [18..19] Message count (uint16 BE).  0 = heartbeat, 0xFFFF = end of
+//            session.  Neither carries messages; for both, the sequence
+//            field is the NEXT sequence number the server will send.
 //   Then for each of the `count` messages:
 //     [0..1]  Message length in bytes, not including these 2 bytes (uint16 BE)
 //     [2..N]  ITCH message body
 //
-// Gap detection: the receiver tracks `next_expected_seq`.  On each packet:
+// Gap detection: the receiver tracks `next_expected_seq`.  On each packet
+// (data, heartbeat or end-of-session):
 //   if header.seq_num > next_expected_seq  → gap of (seq_num - next_expected) messages
 //   if header.seq_num < next_expected_seq  → duplicate / retransmit
 //
-// Recovery: send a RetransmitRequest over TCP to the MoldUDP64 retransmission
-// server on port 1236 (convention).  The server replays the requested range
-// as a sequence of MoldUDP64 packets over TCP.
+// Recovery: send a 20-byte request packet (session, first seq, count) as a
+// UDP datagram to the venue's MoldUDP64 re-request server. The server
+// answers with ordinary MoldUDP64 downstream packets, unicast back to the
+// requesting socket. Requests and replies are UDP and may themselves be
+// lost — the client simply re-requests (see gap_buffer.hpp and
+// retransmit_client.hpp). TCP replay is a different Nasdaq service
+// (SoupBinTCP / GLIMPSE), not part of MoldUDP64.
 //
 // ── This file ─────────────────────────────────────────────────────────────────
 //
@@ -68,11 +75,13 @@ inline void put_be64(uint8_t* p, uint64_t v) noexcept {
 // ── MoldUDP64 header ──────────────────────────────────────────────────────────
 
 static constexpr std::size_t kMoldHeaderSize = 20;
+static constexpr uint16_t    kMoldHeartbeatCount    = 0;
+static constexpr uint16_t    kMoldEndOfSessionCount = 0xFFFF;
 
 struct MoldHeader {
     char     session[10];   // ASCII, space-padded, NOT null-terminated
     uint64_t seq_num;       // native byte order after parse()
-    uint16_t msg_count;     // 0 = heartbeat
+    uint16_t msg_count;     // 0 = heartbeat, 0xFFFF = end of session
 
     [[nodiscard]] bool parse(const uint8_t* buf, std::size_t len) noexcept {
         if (len < kMoldHeaderSize) return false;
@@ -89,7 +98,12 @@ struct MoldHeader {
         put_be16(buf + 18, msg_count);
     }
 
-    [[nodiscard]] bool is_heartbeat() const noexcept { return msg_count == 0; }
+    [[nodiscard]] bool is_heartbeat() const noexcept { return msg_count == kMoldHeartbeatCount; }
+    [[nodiscard]] bool is_end_of_session() const noexcept { return msg_count == kMoldEndOfSessionCount; }
+    // Number of messages actually carried (0 for heartbeat / end of session).
+    [[nodiscard]] uint16_t data_count() const noexcept {
+        return is_end_of_session() ? 0 : msg_count;
+    }
     [[nodiscard]] std::string_view session_view() const noexcept {
         return { session, 10 };
     }
@@ -272,11 +286,14 @@ struct ItchOrderReplace {
     }
 };
 
-// ── MoldUDP64 retransmit request ──────────────────────────────────────────────
+// ── MoldUDP64 request packet ─────────────────────────────────────────────────
 //
-// Sent over TCP to the retransmission server when a sequence gap is detected.
-// Format: session(10) + first_seq_requested(8 BE) + count(2 BE) = 20 bytes.
-// The server replays [first_seq, first_seq + count) as MoldUDP64 packets over TCP.
+// Sent as a UDP datagram to the re-request server when a sequence gap is
+// detected. Format: session(10) + first_seq_requested(8 BE) + count(2 BE)
+// = 20 bytes — the same layout as a downstream header. The server replays
+// [first_seq, first_seq + count) as ordinary MoldUDP64 downstream packets,
+// unicast to the requester (possibly fewer messages than asked for, if
+// they don't fit one datagram; the requester re-requests the rest).
 
 struct RetransmitRequest {
     char     session[10];
@@ -287,6 +304,13 @@ struct RetransmitRequest {
         std::memcpy(buf, session, 10);
         put_be64(buf + 10, first_seq);
         put_be16(buf + 18, count);
+    }
+    [[nodiscard]] bool parse(const uint8_t* buf, std::size_t len) noexcept {
+        if (len < kSize) return false;
+        std::memcpy(session, buf, 10);
+        first_seq = be64(buf + 10);
+        count     = be16(buf + 18);
+        return true;
     }
     static constexpr std::size_t kSize = 20;
 };

@@ -109,6 +109,10 @@ add_executable(test_live_multicast tests/test_live_multicast.cpp)
 target_link_libraries(test_live_multicast PRIVATE hft_iface)
 add_test(NAME live_multicast COMMAND test_live_multicast)
 
+add_executable(test_live_retransmit tests/test_live_retransmit.cpp)
+target_link_libraries(test_live_retransmit PRIVATE hft_iface)
+add_test(NAME live_retransmit COMMAND test_live_retransmit)
+
 # Real NASDAQ ITCH 5.0 support: spec-accurate parser + reference book (see BUGS_FOUND.md #15, #16).
 add_executable(replay_itch50 tools/replay_itch50.cpp)
 target_link_libraries(replay_itch50 PRIVATE hft_iface)

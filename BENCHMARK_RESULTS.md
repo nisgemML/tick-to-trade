@@ -54,6 +54,14 @@ the sequential, localized access pattern normal in-order delivery
 produces. 817,116 messages delivered identically in every run below —
 same correctness, only allocation strategy differs.
 
+> **Note (BUGS_FOUND.md #20):** 817,116 is 2,084 short of the 819,200
+> sent. The bench's first shuffled packet is a random sequence, and the
+> old `GapBuffer` synced to whatever arrived first, so everything below it
+> was treated as a late join. The bench now sets `expected_first_seq = 1`
+> and delivers all 819,200. The same change moved `GapBuffer` to
+> per-message buffering, which on this machine cut this bench's p50 from
+> ~133 ns to ~47–80 ns per packet; the runs below predate it.
+
 **First attempt — a misleading result, caught and corrected rather than
 published.** The very first run of each binary showed a dramatic gap:
 

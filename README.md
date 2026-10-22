@@ -12,7 +12,7 @@ just sitting next to each other in one folder.
 | Matching / LOB | SoA engine, differential testing vs. an independent reference model | `third_party/options-engine` |
 | Concurrency | Formally-proved MPSC queue + engine's own SPSC queues | `third_party/mpsc-queue` |
 | Logging | Blocking write() by default; real io_uring async logger via `-DHFT_WITH_IOURING=ON` (needs liburing) | `third_party/io-uring-queue` |
-| Market data | MoldUDP64/ITCH decode + gap detection; real UDP multicast receive (`SO_TIMESTAMPING`) verified end-to-end on a local group, not just synthetic replay — see `tools/run_live_pipeline.cpp` and BUGS_FOUND.md #13 | `third_party/udp-multicast-receiver` |
+| Market data | MoldUDP64/ITCH decode, gap detection (incl. heartbeat-revealed tail loss), session/end-of-session handling, and **UDP re-request recovery** (`feed/retransmit_client.hpp`, BUGS_FOUND.md #20); real UDP multicast receive (`SO_TIMESTAMPING`) verified end-to-end on a local group, not just synthetic replay — see `tools/run_live_pipeline.cpp` and BUGS_FOUND.md #13 | `third_party/udp-multicast-receiver` |
 | Real-data replay | NASDAQ TotalView-ITCH 5.0 files (`replay_itch50`): spec-accurate parser, independent reference book, checked against a third-party ITCH implementation — see BUGS_FOUND.md #15-17 | `include/hft/itch50.hpp`, `tools/replay_itch50.cpp` |
 | Strategy | Inventory-aware market maker: correct P&L, skew, position limits | `include/hft/market_maker.hpp` |
 | Allocation | GapBuffer's real ~6MB backing store NUMA-node-bound and explicitly hugepage-backed via `-DHFT_WITH_NUMA=ON` (needs libnuma); independently verified against the kernel, not trusted from return codes — see BUGS_FOUND.md #14 | `include/hft/numa_support.hpp`, `third_party/cpp26-alloc` |
@@ -53,6 +53,11 @@ ctest --test-dir build --output-on-failure
 # Real UDP multicast, not a function call -- two terminals:
 ./build/run_live_pipeline 239.1.1.1 15001 lo 10   # listens, prints stats on exit
 ./build/send_live_itch   239.1.1.1 15001 lo 2000  # sends real MoldUDP64/ITCH packets
+
+# Same, with 15% of packets deliberately never sent and recovered over UDP
+# from send_live_itch's built-in MoldUDP64 re-request server:
+./build/run_live_pipeline 239.1.1.1 15001 lo 5 127.0.0.1:16001 &
+./build/send_live_itch   239.1.1.1 15001 lo 2000 200 15 16001
 ```
 
 CI builds and tests this repo three ways (`Release`, ASan+UBSan, TSan) and
@@ -112,6 +117,7 @@ What that does **not** show: **every run has 0 fills**, because a replay rebuild
 | `gap_injection` | A real sequence gap is detected, held, and correctly reordered on fill |
 | `market_maker` | Exact round-trip P&L, correct fill-side attribution (aggressor *and* passive), skew direction, position-limit enforcement |
 | `live_multicast` | Real UDP multicast socket (not a function call) delivers every packet correctly through GapBuffer -> ItchAdapter -> Pipeline -> fills |
+| `live_retransmit` | Same, with ~10% of packets (including the first and the tail) never sent: heartbeats reveal tail loss, `RetransmitClient` recovers every message over UDP from a real re-request server, 1000/1000 in order, session complete after End of Session (BUGS_FOUND.md #20) |
 | `itch50_oracle` | `itch50.hpp` vs an independent third-party ITCH 5.0 implementation: 1,214 messages, 10,327 field checks incl. boundary values; also requires the vendored feed parser to agree with it (BUGS_FOUND.md #15, fixed upstream) |
 | `itch50_replay_e2e` | Real NASDAQ file framing through the real pipeline and engine, 3 symbols x (from start / mid-day snapshot / reference only): engine book == independently derived book, 0 fills, capacity-overflow detection |
 | `check_macro_fails` (CI-only, not ctest) | Proves the test framework itself can't silently no-op under `-DNDEBUG` |

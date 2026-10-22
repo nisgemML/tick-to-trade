@@ -15,14 +15,19 @@
 // correctly end-to-end over a real socket, not just in a unit test that
 // calls ingest() directly.
 //
-// Usage: run_live_pipeline [group] [port] [iface] [duration_s]
-//   defaults: 239.1.1.1 15001 lo 10
+// Usage: run_live_pipeline [group] [port] [iface] [duration_s] [rerequest_host:port]
+//   defaults: 239.1.1.1 15001 lo 10 (no re-request server)
+//
+// With a re-request server given, sequence gaps are recovered over UDP
+// (feed/retransmit_client.hpp) instead of only being logged; see
+// send_live_itch's drop_pct/rerequest_port arguments for a local venue.
 
 #include "hft/pipeline.hpp"
 #include "hft/itch_adapter.hpp"
 #include "hft/numa_support.hpp"
 #include "feed/receiver.hpp"
 #include "feed/gap_buffer.hpp"
+#include "feed/retransmit_client.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -45,6 +50,7 @@ int main(int argc, char** argv) {
     const uint16_t    port  = argc > 2 ? static_cast<uint16_t>(std::stoi(argv[2])) : 15001;
     const std::string iface = argc > 3 ? argv[3] : "lo";
     const int    duration_s = argc > 4 ? std::stoi(argv[4]) : 10;
+    const std::string rr_addr = argc > 5 ? argv[5] : "";
 
     hft::PipelineConfig pcfg;
     pcfg.log_path = "live_fills.log";
@@ -63,7 +69,12 @@ int main(int argc, char** argv) {
     // NUMA-aware, explicitly hugepage-backed when built with
     // -DHFT_WITH_NUMA=ON (falls back to plain heap allocation otherwise --
     // see include/hft/numa_support.hpp for both paths).
-    auto gap_buf = hft::make_gap_buffer(/*node=*/0);
+    // With a re-request server we can recover from the start of the
+    // session, so expect seq 1 (a lost first packet is then a gap, not a
+    // silent late join). Without one, sync to whatever arrives first.
+    feed::GapBuffer::Config gcfg;
+    if (!rr_addr.empty()) gcfg.expected_first_seq = 1;
+    auto gap_buf = hft::make_gap_buffer(/*node=*/0, gcfg);
     if (!gap_buf) {
         std::fprintf(stderr, "GapBuffer allocation failed\n");
         pipeline.stop();
@@ -91,6 +102,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::unique_ptr<feed::RetransmitClient> retx;
+    if (!rr_addr.empty()) {
+        const auto colon = rr_addr.rfind(':');
+        if (colon == std::string::npos) {
+            std::fprintf(stderr, "rerequest address must be host:port\n");
+            pipeline.stop();
+            return 1;
+        }
+        feed::RetransmitClient::Config ccfg;
+        ccfg.server_ip   = rr_addr.substr(0, colon);
+        ccfg.server_port = static_cast<uint16_t>(std::stoi(rr_addr.substr(colon + 1)));
+        retx = std::make_unique<feed::RetransmitClient>(ccfg);
+        if (!retx->open()) { pipeline.stop(); return 1; }
+        receiver.attach_retransmit_client(*retx);
+        std::printf("run_live_pipeline: gap recovery via re-request server %s\n", rr_addr.c_str());
+    }
+
     std::printf("run_live_pipeline: listening on %s:%u (%s) for %ds (Ctrl-C to stop early)\n",
                 group.c_str(), port, iface.c_str(), duration_s);
 
@@ -113,6 +141,14 @@ int main(int argc, char** argv) {
         "submitted=%lu accepted=%lu fills=%lu queue_full_rejects=%lu\n",
         receiver.stat_recv_calls(), receiver.stat_messages_delivered(), receiver.stat_parse_errors(),
         r.events_submitted, r.events_accepted, r.fills, r.queue_full_rejects);
+    std::printf(
+        "gaps=%lu retx_requests=%lu next_expected=%lu end_of_session=%d session_complete=%d",
+        gap_buf->stat_gaps(), gap_buf->stat_retransmit_requests(), gap_buf->next_expected(),
+        int(gap_buf->end_of_session()), int(gap_buf->session_complete()));
+    if (retx)
+        std::printf(" | retx_sent=%lu replies=%lu recovered=%lu",
+                    retx->stat_requests_sent(), retx->stat_replies(), retx->stat_messages_recovered());
+    std::printf("\n");
 
     return 0;
 }

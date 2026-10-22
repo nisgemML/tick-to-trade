@@ -11,7 +11,9 @@ every section says what you'd see, what it means, and what to do about it.
 
 | Failure | Detected by | Recovery |
 |---|---|---|
-| Packet loss | `GapBuffer`: `seq > next_expected` | Buffer + retransmit request (§2) |
+| Packet loss | `GapBuffer`: `seq > next_expected` on a data packet **or a heartbeat** | Buffer + retransmit request (§2) |
+| Tail loss (feed then goes quiet) | `GapBuffer`: heartbeat / End of Session `seq > next_expected` | Same as packet loss (§2) |
+| Foreign / next-day session on the group | `GapBuffer`: session ≠ pinned session | Dropped + counted, or rollover (§2a) |
 | Packet duplication | `GapBuffer`: `seq < next_expected` | Dropped silently, counted (`stat_duplicates`) |
 | Packet reordering | `GapBuffer`: out-of-order buffer | Buffered, flushed in order once the gap fills |
 | **Correlated loss on one line** | N/A for a single receiver | `FeedArbitrator` — see §3 |
@@ -30,31 +32,63 @@ where the actual operational risk lives.
    gaps under ~100µs are reordering, not loss, and resolve themselves
    without a retransmit request ever being sent.
 3. If still missing after the timeout, `on_retransmit` fires with a
-   `RetransmitRequest` (session, first_seq, count). **This library does not
-   send it.** Connecting to the retransmission server and sending the
-   request over TCP is left to the application — deliberately, since it's
-   the one piece of this pipeline that's genuinely venue-specific (host,
-   port, auth, connection pooling all vary). Wire `on_retransmit` to your
-   TCP client.
+   `RetransmitRequest` (session, first_seq, count). With a
+   `RetransmitClient` attached (`MulticastReceiver::attach_retransmit_client`)
+   it is sent as a 20-byte UDP datagram to the venue's MoldUDP64
+   re-request server, and the server's replies — ordinary MoldUDP64
+   packets, unicast back — are polled and ingested on the receive thread.
+   The request covers the contiguous missing run at `next_expected`,
+   bounded by the highest sequence the feed has evidenced (data,
+   heartbeat or End of Session), so it never asks for sequences that
+   don't exist yet. Without a client attached, `on_retransmit` is just a
+   callback — wire it to whatever your venue needs.
 4. If the gap is still open after `retry_interval_ns` (library default 1ms;
    the `receiver` binary configures 2ms), the
    request is resent — capped at `max_retransmit_count` (default 100)
    sequences per request, so a gap larger than that is requested in
-   multiple rounds.
-5. **Buffer overflow.** The out-of-order buffer is a fixed 4096-slot ring
-   (§ design note in `gap_buffer.hpp`). A gap larger than 4096 messages
-   causes new packets to collide with not-yet-delivered ones in the
-   buffer; `stat_buffer_overflows` increments and the colliding packet is
-   dropped. **This is the one condition this receiver treats as
-   irrecoverable in-place.** There is no in-process path back to a
-   consistent state past this point — the buffer literally cannot hold
-   enough context to reconstruct the missing range while continuing to
-   accept new data.
+   multiple rounds. Requests and replies are UDP and can be lost; that is
+   handled by this same retry, not by any state in the client. Replies may
+   also carry fewer messages than requested (one datagram's worth). When
+   everything last requested has arrived but a hole remains (a second
+   hole, or the rest of a capped range), the next request goes out on the
+   next tick instead of waiting for the retry interval.
+5. **Buffer overflow.** The out-of-order buffer is a fixed 4096-slot ring,
+   one slot per message sequence (§ design note in `gap_buffer.hpp`). A
+   message more than 4096 sequences past `next_expected` cannot be held;
+   `stat_buffer_overflows` increments and it is dropped. Because the
+   sequence high-water mark still advances, the dropped range is simply
+   requested again once the window has moved: with a reachable
+   re-request server, overflow costs extra retransmit traffic and
+   latency, not data (`test_gap_buffer`'s `test_request_cap_and_overflow`
+   recovers a gap larger than the window this way).
 
-   **What to do:** on `stat_buffer_overflows() > 0`, the application should
-   stop trusting the current `GapBuffer`/`OrderBook` state, tear both down,
-   and reconnect — see §4 for what "reconnect" actually needs to mean for
-   the order book, not just the socket.
+   **What to do:** without a re-request server, overflow is irrecoverable
+   in-place — stop trusting the current `GapBuffer`/`OrderBook` state, tear
+   both down, and reconnect (see §4 for what that needs to mean for the
+   order book). With one, alert on a sustained overflow rate: it means the
+   window is too small for your loss/latency profile.
+
+## 2a. Heartbeats, End of Session and session identity
+
+- **Heartbeat** (count 0): its sequence is the next sequence the server
+  will send. A heartbeat ahead of `next_expected` opens a gap — the only
+  way loss of the last packets before a quiet period is ever detected.
+- **End of Session** (count 0xFFFF): same sequence rule, carries no
+  messages. `OnEndOfSession` fires once; `session_complete()` becomes true
+  when every message before it has been delivered. Missing messages
+  before End of Session are still requested.
+- **Session identity:** the 10-byte session is pinned from
+  `Config::session` (if non-blank) or from the first packet. A packet for
+  another session is dropped and counted (`stat_session_mismatches`) —
+  stray traffic can never be mixed into this sequence space. With
+  `accept_session_change = true` it is instead a **rollover**: all
+  buffered state is discarded, sequencing resyncs to the new session,
+  and `OnSessionChange` fires. Anything built from the old session (the
+  order book above all) must be reset on that callback.
+- **Where the stream starts:** by default the buffer syncs to the first
+  packet it sees (a late join). Set `expected_first_seq = 1` when the
+  receiver is up before session open: a lost *first* packet is then a
+  gap and gets requested, instead of the session silently starting at 2.
 
 ---
 
@@ -116,11 +150,13 @@ before startup was sitting inside the current best price.
   correct book with zero extra work.
 - If you must start mid-session (a restart after a crash, a redeploy),
   you need one of: (a) a venue-provided snapshot mechanism outside ITCH
-  itself, or (b) a full retransmit from sequence 1 via the retransmission
-  server described in §2 (works, but is exactly the "large gap" case in
-  §2 — expect it to blow the 4096-slot buffer and need to be handled as a
-  bulk backfill *before* switching the live `GapBuffer` over to real-time
-  traffic, not as a live gap-fill).
+  itself, or (b) a full retransmit from sequence 1 via the re-request
+  server described in §2 — `expected_first_seq = 1` makes `GapBuffer`
+  request exactly that. It works (overflowed messages are re-requested as
+  the window advances), but for a large session it is a bulk backfill at
+  100 messages per request while live traffic overflows the window; a
+  venue's dedicated replay/snapshot service is the better tool for that
+  size of recovery.
 - At minimum, log and monitor `next_expected()` at startup against a
   known session-open sequence number if your venue publishes one, so a
   mid-session cold start is a visible, alertable event rather than a
@@ -132,8 +168,10 @@ before startup was sitting inside the current best price.
 
 - **CPU pinning / `SCHED_FIFO`.** Belongs in the application's startup
   sequence, not the library — see `README.md`'s Production Considerations.
-- **The retransmission TCP client itself.** Venue-specific; wire
-  `on_retransmit` to yours.
+- **Venue-specific recovery extras.** `RetransmitClient` speaks plain
+  MoldUDP64 re-request over UDP. Venue-specific rate limits, multiple
+  request servers, and escalation when a server can no longer serve a
+  range (it only keeps so much history) are left to the application.
 - **Snapshot/refresh outside ITCH.** Not an ITCH concept at all — see §4.
 - **DPDK / kernel bypass.** `GapBuffer::ingest()` takes a raw byte span
   and is transport-agnostic; swap the receive path, keep everything above
@@ -147,7 +185,13 @@ before startup was sitting inside the current best price.
   PCAP file (`--gap-at`, `--gap-len`, `--dup-at`) — replay it through
   `receiver --replay` to exercise §2 end to end offline.
 - `tests/test_gap_buffer.cpp` covers the gap/duplicate/reorder state
-  machine directly.
+  machine directly, plus §2a: tail loss via heartbeat, End of Session,
+  session pin/mismatch/rollover, retransmits re-packetised differently
+  from the originals, multi-hole gaps, window overflow.
+- `tests/test_retransmit.cpp` runs §2 over real UDP sockets on loopback
+  against `feed/rerequest_server.hpp`: line loss, tail loss, lost replies
+  and partial replies, all recovered in order; no server; wrong-session
+  server.
 - `tests/test_feed_arbitrator.cpp` covers §3: it specifically asserts that
   a one-line drop covered by the other line produces **zero** gap events
   and **zero** retransmit requests, and that a drop on both lines still

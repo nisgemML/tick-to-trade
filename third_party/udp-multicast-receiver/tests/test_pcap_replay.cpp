@@ -152,7 +152,7 @@ static void test_heartbeat_in_pcap() {
         // seq 1, heartbeat, seq 2
         auto b1 = make_itch_add(1, 'B', 100, 1'500'000);
         w.write_mold_packet(1000, sess, 1, 1, b1.data(), uint16_t(b1.size()));
-        w.write_heartbeat(2000, sess);
+        w.write_heartbeat(2000, sess, /*next_seq=*/2);
         auto b2 = make_itch_add(2, 'B', 200, 1'510'000);
         w.write_mold_packet(3000, sess, 2, 1, b2.data(), uint16_t(b2.size()));
     }

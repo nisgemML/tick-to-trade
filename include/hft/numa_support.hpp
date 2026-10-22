@@ -5,7 +5,7 @@
 // allocator (cpp26-alloc's alloc/numa.hpp, vendored) for the one piece of
 // this pipeline that's actually worth NUMA-aware placement: GapBuffer's
 // backing storage. GapBuffer isn't a small object with a pointer to a
-// separately-heap-allocated buffer -- std::array<BufferedPacket, kCapacity>
+// separately-heap-allocated buffer -- std::array<BufferedMessage, kCapacity>
 // is a *direct member*, so GapBuffer itself is the ~6MB object (confirmed
 // by reading third_party/udp-multicast-receiver/include/feed/gap_buffer.hpp
 // before writing this, not assumed). Placement-constructing it into
@@ -63,11 +63,12 @@ using GapBufferPtr = std::unique_ptr<feed::GapBuffer, NumaGapBufferDeleter>;
 // Returns an empty GapBufferPtr (null) if even a regular (non-huge),
 // NUMA-bound allocation fails outright -- caller must check, same
 // contract as any other allocating factory in this codebase.
-[[nodiscard]] inline GapBufferPtr make_gap_buffer(int node = 0) {
+[[nodiscard]] inline GapBufferPtr make_gap_buffer(int node = 0,
+                                                 feed::GapBuffer::Config cfg = {}) {
     auto region = alloc::numa::alloc_on_node(sizeof(feed::GapBuffer), node, /*want_hugepage=*/true);
     if (!region) return GapBufferPtr(nullptr, NumaGapBufferDeleter(alloc::numa::NumaRegion{}));
     auto* raw = region->data();
-    auto* p = ::new (raw) feed::GapBuffer();
+    auto* p = ::new (raw) feed::GapBuffer(cfg);
     return GapBufferPtr(p, NumaGapBufferDeleter(std::move(*region)));
 }
 
@@ -75,8 +76,9 @@ using GapBufferPtr = std::unique_ptr<feed::GapBuffer, NumaGapBufferDeleter>;
 
 using GapBufferPtr = std::unique_ptr<feed::GapBuffer>;
 
-[[nodiscard]] inline GapBufferPtr make_gap_buffer(int /*node*/ = 0) {
-    return std::make_unique<feed::GapBuffer>();
+[[nodiscard]] inline GapBufferPtr make_gap_buffer(int /*node*/ = 0,
+                                                 feed::GapBuffer::Config cfg = {}) {
+    return std::make_unique<feed::GapBuffer>(cfg);
 }
 
 #endif

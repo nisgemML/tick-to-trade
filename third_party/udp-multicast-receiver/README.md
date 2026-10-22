@@ -84,15 +84,25 @@ The core of the receiver. Maintains `next_expected_seq` and handles all three fa
 
 | Condition | Detection | Action |
 |---|---|---|
-| `seq > next_expected` | gap detected | buffer packet, fire `on_gap` callback, request retransmit after `gap_timeout_ns` |
-| `seq == next_expected` | in-order | deliver immediately, flush any buffered out-of-order packets |
+| `seq > next_expected` | gap detected | buffer message, fire `on_gap` callback, request retransmit after `gap_timeout_ns` |
+| `seq == next_expected` | in-order | deliver immediately, flush any buffered out-of-order messages |
 | `seq < next_expected` | duplicate | drop silently, increment `stat_duplicates` |
+| heartbeat / End of Session `seq > next_expected` | tail loss | gap opened from the header alone (no data needed) |
+| session ≠ pinned session | foreign or next-day traffic | drop + `stat_session_mismatches`, or rollover with `accept_session_change` |
+
+Classification is per **message** (message *i* of a packet has sequence `seq + i`), so a packet that straddles `next_expected` — e.g. a retransmit re-packetised differently from the original — delivers only its new part. End of Session (count `0xFFFF`) fires `on_end_of_session`; `session_complete()` reports when everything before it has been delivered.
 
 **Retransmit timing:** gap detected → wait `gap_timeout_ns` (default 100µs) before first request → retry every `retry_interval_ns` (default 1ms). Rate-limited to avoid flooding the retransmission server.
 
-**Buffer capacity:** 4096 slots (power-of-two for O(1) index via bitmask), indexed by MoldUDP64 sequence number, so it spans 4096 *messages* past `next_expected` — ~6.26 MB pre-allocated inline. That window lasts 4096 / R seconds at feed rate R: ~4 ms at 1M msg/s, but only ~0.4 ms at a 10M msg/s burst, which is shorter than a typical retransmit round trip. So a single-line gap at peak burst rate *can* overflow it — that is a known, counted (`stat_buffer_overflows`) limit, and the reason A/B arbitration matters: it fills most single-line gaps without a retransmit at all. See `docs/loss-handling.md` §2 for what happens on overflow.
+**Buffer capacity:** 4096 slots (power-of-two for O(1) index via bitmask), one per MoldUDP64 message sequence number, so it spans 4096 *messages* past `next_expected` — ~6.2 MB pre-allocated inline. That window lasts 4096 / R seconds at feed rate R: ~4 ms at 1M msg/s, but only ~0.4 ms at a 10M msg/s burst, which is shorter than a typical retransmit round trip. So a single-line gap at peak burst rate *can* overflow it — that is a known, counted (`stat_buffer_overflows`) limit, and the reason A/B arbitration matters: it fills most single-line gaps without a retransmit at all. See `docs/loss-handling.md` §2 for what happens on overflow.
 
-**Gap closure:** when the missing sequence(s) arrive (via retransmit or natural delivery), `flush_buffer()` scans forward from `next_expected` and delivers all consecutive buffered packets. Each buffered slot keeps the original `recv_ns` of its packet, so a message delivered late (because it sat behind a gap) still carries its true arrival time downstream — not the time it happened to get flushed.
+**Gap closure:** when the missing sequence(s) arrive (via retransmit or natural delivery), `flush_buffer()` scans forward from `next_expected` and delivers all consecutive buffered messages. If another hole remains, the gap stays open there (same loss episode, original detection time). Each buffered slot keeps the original `recv_ns` of its packet, so a message delivered late (because it sat behind a gap) still carries its true arrival time downstream — not the time it happened to get flushed.
+
+### `include/feed/retransmit_client.hpp`
+
+MoldUDP64 gap recovery: sends `GapBuffer`'s `RetransmitRequest`s as 20-byte UDP datagrams to the venue's re-request server and feeds the unicast replies (ordinary MoldUDP64 packets) back into the same `GapBuffer`. `MulticastReceiver::attach_retransmit_client()` polls the reply socket inside `run()`, so replies are ingested on the receive thread — `GapBuffer` stays single-threaded. The socket is `connect()`ed to the server so only its datagrams are accepted. Lost requests, lost replies and partial replies need no client state: `GapBuffer` re-requests whatever is still missing.
+
+`include/feed/rerequest_server.hpp` is the venue side, for tests and demos only: it records what a sender publishes and answers requests, with optional reply-size caps and deliberate reply loss.
 
 ### `include/feed/receiver.hpp`
 
@@ -193,7 +203,14 @@ tests/test_wire_format.cpp     — byte-order helpers, MoldHeader parse/round-tr
                                   RetransmitRequest serialise
 tests/test_gap_buffer.cpp      — in-order delivery, duplicate drop, gap detection,
                                   out-of-order flush, retransmit timing, heartbeats,
-                                  multi-message packets, large sequential stream
+                                  multi-message packets, large sequential stream,
+                                  heartbeat-revealed tail loss, End of Session,
+                                  session pin/mismatch/rollover, re-packetised
+                                  retransmit overlap, multi-hole gaps, request
+                                  bounding, window overflow recovery, truncation
+tests/test_retransmit.cpp      — real UDP re-request round trips on loopback:
+                                  line + tail + reply loss with partial replies,
+                                  all recovered in order; no server; wrong session
 tests/test_pcap_replay.cpp     — write + read round-trip, gap in PCAP file,
                                   heartbeat filtering, port filter, multi-message
 tests/test_order_book.cpp      — full order lifecycle, price-level aggregation,
@@ -222,6 +239,11 @@ ctest --test-dir build --output-on-failure
 
 # Live multicast receiver (requires network access)
 ./build/receiver --group 239.1.1.1 --port 15001 --iface eth0
+
+# ...with gap recovery from the venue's MoldUDP64 re-request server, expecting
+# the session from seq 1 (so loss before the first received packet is recovered)
+./build/receiver --group 239.1.1.1 --port 15001 --iface eth0 \
+                 --rerequest 10.0.0.5:1236 --from-start
 
 # PCAP replay (works anywhere)
 ./build/gen_pcap --count 50000 --gap-at 1000 --gap-len 3 test.pcap
@@ -256,7 +278,7 @@ ctest --test-dir build --output-on-failure
 
 **Not included (intentionally):**
 
-- **Retransmission TCP client:** `MulticastReceiver` fires the `on_retransmit` callback with a populated `RetransmitRequest`. Connecting to the retransmission server and sending it over TCP is left to the application layer — it depends on your network topology and whether you have a backup feed. See `docs/loss-handling.md` §2.
+- **Venue-specific recovery policy:** `RetransmitClient` implements standard MoldUDP64 UDP re-request. Venue rate limits, multiple request servers, and what to do when a server no longer holds a range are left to the application. See `docs/loss-handling.md` §2.
 
 - **CPU pinning:** `pthread_setaffinity_np(CPU_N)` and `SCHED_FIFO` priority belong in the application's startup sequence, not in the library. See `docs/linux-tuning.md` for the full setup.
 

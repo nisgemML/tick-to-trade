@@ -17,6 +17,26 @@ jobs:
         run: cmake --build build -j 2
       - name: integration tests
         run: ctest --test-dir build --output-on-failure
+      - name: lossy live multicast recovered via MoldUDP64 re-request gives identical fills
+        run: |
+          # Lossless reference run, then the same stream with 15% of packets
+          # never sent and recovered over UDP (BUGS_FOUND.md #20). The two
+          # runs must produce the same fill count and a complete session.
+          ./build/run_live_pipeline 239.1.1.1 15001 lo 4 > /tmp/lossless.txt &
+          sleep 1
+          ./build/send_live_itch 239.1.1.1 15001 lo 2000 200
+          wait
+          ./build/run_live_pipeline 239.1.1.1 15001 lo 5 127.0.0.1:16001 > /tmp/lossy.txt &
+          sleep 1
+          ./build/send_live_itch 239.1.1.1 15001 lo 2000 200 15 16001
+          wait
+          cat /tmp/lossless.txt /tmp/lossy.txt
+          a=$(grep -o 'fills=[0-9]*' /tmp/lossless.txt | head -1)
+          b=$(grep -o 'fills=[0-9]*' /tmp/lossy.txt | head -1)
+          test -n "$a" && test "$a" = "$b"
+          grep -q 'delivered=2000 ' /tmp/lossy.txt
+          grep -q 'session_complete=1' /tmp/lossy.txt
+          grep -q 'retx_sent=[1-9]' /tmp/lossy.txt
       - name: install the third-party ITCH oracle used to generate test data
         run: pip install -r scripts/requirements.txt
       - name: checked-in ITCH test data is reproducible from the oracle
